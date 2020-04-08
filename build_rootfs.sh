@@ -75,7 +75,7 @@ if[ $? -eq 0];then
 echo "修改grub文件"
 sudo sed -i 's/#GRUB_HEDDEN_TIMEOUT=0//' /boot/grub.cfg
 sudo cat > /boot/grub.cfg << EOF
-menuentry "FARSIGHT busybox"{
+menuentry "Shortsight busybox"{
 	insmod part_msdos
 	insmod ext2
 
