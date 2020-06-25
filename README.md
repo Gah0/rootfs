@@ -12,7 +12,16 @@ This is an test environment(my_rootfs.sh)  for my linux kernel.
 
 ```
 chmod a+x build_rootfs.sh
-./build_rootfs.sh
+source build_rootfs.sh
 ```
 
-这样就可以快速完成了作业讨论！！
+然后逐个输入
+
+```
+install
+mke
+mkrootfs
+mkeimg
+```
+
+这样就可以快速完成了根文件系统安装啦！！
