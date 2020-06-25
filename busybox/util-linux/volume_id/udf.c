@@ -17,12 +17,17 @@
  *	License along with this library; if not, write to the Free Software
  *	Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
+
+//kbuild:lib-$(CONFIG_FEATURE_VOLUMEID_UDF) += udf.o
+
+//config:
 //config:config FEATURE_VOLUMEID_UDF
 //config:	bool "udf filesystem"
 //config:	default y
 //config:	depends on VOLUMEID
-
-//kbuild:lib-$(CONFIG_FEATURE_VOLUMEID_UDF) += udf.o
+//config:	help
+//config:	  TODO
+//config:
 
 #include "volume_id_internal.h"
 
@@ -136,7 +141,7 @@ anchor:
 	if (type != 2) /* TAG_ID_AVDP */
 		goto found;
 
-	/* get descriptor list address and block count */
+	/* get desriptor list address and block count */
 	count = le32_to_cpu(vd->type.anchor.length) / bs;
 	loc = le32_to_cpu(vd->type.anchor.location);
 	dbg("0x%x descriptors starting at logical secor 0x%x", count, loc);

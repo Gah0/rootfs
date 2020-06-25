@@ -7,6 +7,7 @@
  *
  * Authors: Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  */
+
 #include "libbb.h"
 #include "rt_names.h"
 #include "utils.h"
@@ -15,7 +16,7 @@
 
 /* Please conditionalize exotic protocols on CONFIG_something */
 
-static const uint16_t llproto_ids[] ALIGN2 = {
+static const uint16_t llproto_ids[] = {
 #define __PF(f,n) ETH_P_##f,
 __PF(LOOP,loop)
 __PF(PUP,pup)
@@ -83,7 +84,7 @@ ETH_P_IP
 
 /* Keep declarations above and below in sync! */
 
-static const char llproto_names[] ALIGN1 =
+static const char llproto_names[] =
 #define __PF(f,n) #n "\0"
 __PF(LOOP,loop)
 __PF(PUP,pup)

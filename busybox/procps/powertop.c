@@ -8,23 +8,16 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
-//config:config POWERTOP
-//config:	bool "powertop (9.6 kb)"
-//config:	default y
-//config:	help
-//config:	Analyze power consumption on Intel-based laptops
-//config:
-//config:config FEATURE_POWERTOP_INTERACTIVE
-//config:	bool "Accept keyboard commands"
-//config:	default y
-//config:	depends on POWERTOP
-//config:	help
-//config:	Without this, powertop will only refresh display every 10 seconds.
-//config:	No keyboard commands will work, only ^C to terminate.
 
 //applet:IF_POWERTOP(APPLET(powertop, BB_DIR_USR_SBIN, BB_SUID_DROP))
 
 //kbuild:lib-$(CONFIG_POWERTOP) += powertop.o
+
+//config:config POWERTOP
+//config:	bool "powertop"
+//config:	default y
+//config:	help
+//config:	  Analyze power consumption on Intel-based laptops
 
 // XXX This should be configurable
 #define ENABLE_FEATURE_POWERTOP_PROCIRQ 1
@@ -50,8 +43,6 @@
 
 /* Max filename length of entry in /sys/devices subsystem */
 #define BIG_SYSNAME_LEN    16
-
-#define ESC "\033"
 
 typedef unsigned long long ullong;
 
@@ -91,7 +82,7 @@ struct globals {
 	ullong last_usage[MAX_CSTATE_COUNT];
 	ullong start_duration[MAX_CSTATE_COUNT];
 	ullong last_duration[MAX_CSTATE_COUNT];
-#if ENABLE_FEATURE_POWERTOP_INTERACTIVE
+#if ENABLE_FEATURE_USE_TERMIOS
 	struct termios init_settings;
 #endif
 };
@@ -100,7 +91,7 @@ struct globals {
 	SET_PTR_TO_GLOBALS(xzalloc(sizeof(G))); \
 } while (0)
 
-#if ENABLE_FEATURE_POWERTOP_INTERACTIVE
+#if ENABLE_FEATURE_USE_TERMIOS
 static void reset_term(void)
 {
 	tcsetattr_stdin_TCSANOW(&G.init_settings);
@@ -369,7 +360,7 @@ static void process_irq_counts(void)
 		}
 
 		name = p;
-		chomp(p);
+		strchrnul(name, '\n')[0] = '\0';
 		/* Save description of the interrupt */
 		if (nr >= 20000)
 			sprintf(irq_desc, "   <kernel IPI> : %s", name);
@@ -467,9 +458,9 @@ static NOINLINE int process_timer_stats(void)
 			//	func = "Load balancing tick";
 			//}
 
-			if (is_prefixed_with(func, "tick_nohz_"))
+			if (strncmp(func, "tick_nohz_", 10) == 0)
 				continue;
-			if (is_prefixed_with(func, "tick_setup_sched_timer"))
+			if (strncmp(func, "tick_setup_sched_timer", 20) == 0)
 				continue;
 			//if (strcmp(process, "powertop") == 0)
 			//	continue;
@@ -479,7 +470,7 @@ static NOINLINE int process_timer_stats(void)
 				process = idx < 2 ? "[kernel module]" : "<kernel core>";
 			}
 
-			chomp(p);
+			strchrnul(p, '\n')[0] = '\0';
 
 			// 46D\01136\0kondemand/1\0do_dbs_timer (delayed_work_timer_fn)
 			// ^          ^            ^
@@ -600,7 +591,7 @@ static NOINLINE void print_intel_cstates(void)
 	if (!edx || !(ecx & 1))
 		return;
 
-	printf("Your %s the following C-states: ", "CPU supports");
+	printf("Your CPU supports the following C-states: ");
 	i = 0;
 	while (edx) {
 		if (edx & 7)
@@ -611,7 +602,7 @@ static NOINLINE void print_intel_cstates(void)
 	bb_putchar('\n');
 
 	/* Print BIOS C-States */
-	printf("Your %s the following C-states: ", "BIOS reports");
+	printf("Your BIOS reports the following C-states: ");
 	for (i = 0; i < ARRAY_SIZE(bios_table); i++)
 		if (bios_table[i])
 			printf("C%u ", i);
@@ -657,7 +648,7 @@ static void show_timerstats(void)
 		}
 	} else {
 		bb_putchar('\n');
-		bb_simple_error_msg("no stats available; run as root or"
+		bb_error_msg("no stats available; run as root or"
 				" enable the timer_stats module");
 	}
 }
@@ -683,15 +674,16 @@ static void show_timerstats(void)
 //usage:#define powertop_trivial_usage
 //usage:       ""
 //usage:#define powertop_full_usage "\n\n"
-//usage:       "Analyze power consumption on Intel-based laptops"
+//usage:       "Analyze power consumption on Intel-based laptops\n"
 
 int powertop_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
-int powertop_main(int argc UNUSED_PARAM, char UNUSED_PARAM **argv)
+int powertop_main(int UNUSED_PARAM argc, char UNUSED_PARAM **argv)
 {
 	ullong cur_usage[MAX_CSTATE_COUNT];
 	ullong cur_duration[MAX_CSTATE_COUNT];
 	char cstate_lines[MAX_CSTATE_COUNT + 2][64];
-#if ENABLE_FEATURE_POWERTOP_INTERACTIVE
+#if ENABLE_FEATURE_USE_TERMIOS
+	struct termios new_settings;
 	struct pollfd pfd[1];
 
 	pfd[0].fd = 0;
@@ -707,19 +699,22 @@ int powertop_main(int argc UNUSED_PARAM, char UNUSED_PARAM **argv)
 
 	/* Print warning when we don't have superuser privileges */
 	if (geteuid() != 0)
-		bb_simple_error_msg("run as root to collect enough information");
+		bb_error_msg("run as root to collect enough information");
 
 	/* Get number of CPUs */
 	G.total_cpus = get_cpu_count();
 
-	puts("Collecting data for "DEFAULT_SLEEP_STR" seconds");
+	printf("Collecting data for "DEFAULT_SLEEP_STR" seconds\n");
 
-#if ENABLE_FEATURE_POWERTOP_INTERACTIVE
-	/* Turn on unbuffered input; turn off echoing, ^C ^Z etc */
-	set_termios_to_raw(STDIN_FILENO, &G.init_settings, TERMIOS_CLEAR_ISIG);
-	bb_signals(BB_FATAL_SIGS, sig_handler);
+#if ENABLE_FEATURE_USE_TERMIOS
+	tcgetattr(0, (void *)&G.init_settings);
+	memcpy(&new_settings, &G.init_settings, sizeof(new_settings));
+	/* Turn on unbuffered input, turn off echoing */
+	new_settings.c_lflag &= ~(ISIG | ICANON | ECHO | ECHONL);
 	/* So we don't forget to reset term settings */
-	die_func = reset_term;
+	atexit(reset_term);
+	bb_signals(BB_FATAL_SIGS, sig_handler);
+	tcsetattr_stdin_TCSANOW(&new_settings);
 #endif
 
 	/* Collect initial data */
@@ -744,7 +739,7 @@ int powertop_main(int argc UNUSED_PARAM, char UNUSED_PARAM **argv)
 		int i;
 
 		G.cant_enable_timer_stats |= start_timer(); /* 1 on error */
-#if !ENABLE_FEATURE_POWERTOP_INTERACTIVE
+#if !ENABLE_FEATURE_USE_TERMIOS
 		sleep(DEFAULT_SLEEP);
 #else
 		if (safe_poll(pfd, 1, DEFAULT_SLEEP * 1000) > 0) {
@@ -778,8 +773,8 @@ int powertop_main(int argc UNUSED_PARAM, char UNUSED_PARAM **argv)
 			}
 		}
 
-		/* Home; clear screen */
-		printf(ESC"[H" ESC"[J");
+		/* Clear the screen */
+		printf("\033[H\033[J");
 
 		/* Clear C-state lines */
 		memset(&cstate_lines, 0, sizeof(cstate_lines));
@@ -856,9 +851,6 @@ int powertop_main(int argc UNUSED_PARAM, char UNUSED_PARAM **argv)
 	} /* for (;;) */
 
 	bb_putchar('\n');
-#if ENABLE_FEATURE_POWERTOP_INTERACTIVE
-	reset_term();
-#endif
 
 	return EXIT_SUCCESS;
 }

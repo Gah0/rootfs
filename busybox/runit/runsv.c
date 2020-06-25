@@ -13,7 +13,7 @@ modification, are permitted provided that the following conditions are met:
    3. The name of the author may not be used to endorse or promote products
       derived from this software without specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ''AS IS'' AND ANY EXPRESS OR IMPLIED
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
 WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
 EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
@@ -26,17 +26,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 /* Busyboxed by Denys Vlasenko <vda.linux@googlemail.com> */
-
-//config:config RUNSV
-//config:	bool "runsv (7.8 kb)"
-//config:	default y
-//config:	help
-//config:	runsv starts and monitors a service and optionally an appendant log
-//config:	service.
-
-//applet:IF_RUNSV(APPLET(runsv, BB_DIR_USR_BIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_RUNSV) += runsv.o
+/* TODO: depends on runit_lib.c - review and reduce/eliminate */
 
 //usage:#define runsv_trivial_usage
 //usage:       "DIR"
@@ -45,24 +35,30 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <sys/file.h>
 #include "libbb.h"
-#include "common_bufsiz.h"
 #include "runit_lib.h"
 
 #if ENABLE_MONOTONIC_SYSCALL
 #include <sys/syscall.h>
 
+/* libc has incredibly messy way of doing this,
+ * typically requiring -lrt. We just skip all this mess */
 static void gettimeofday_ns(struct timespec *ts)
 {
-	clock_gettime(CLOCK_REALTIME, ts);
+	syscall(__NR_clock_gettime, CLOCK_REALTIME, ts);
 }
 #else
 static void gettimeofday_ns(struct timespec *ts)
 {
-	BUILD_BUG_ON(sizeof(struct timeval) != sizeof(struct timespec));
-	BUILD_BUG_ON(sizeof(((struct timeval*)ts)->tv_usec) != sizeof(ts->tv_nsec));
-	/* Cheat */
-	gettimeofday((void*)ts, NULL);
-	ts->tv_nsec *= 1000;
+	if (sizeof(struct timeval) == sizeof(struct timespec)
+	 && sizeof(((struct timeval*)ts)->tv_usec) == sizeof(ts->tv_nsec)
+	) {
+		/* Cheat */
+		gettimeofday((void*)ts, NULL);
+		ts->tv_nsec *= 1000;
+	} else {
+		extern void BUG_need_to_implement_gettimeofday_ns(void);
+		BUG_need_to_implement_gettimeofday_ns();
+	}
 }
 #endif
 
@@ -104,7 +100,7 @@ struct globals {
 	char *dir;
 	struct svdir svd[2];
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
+#define G (*(struct globals*)&bb_common_bufsiz1)
 #define haslog       (G.haslog      )
 #define sigterm      (G.sigterm     )
 #define pidchanged   (G.pidchanged  )
@@ -113,13 +109,12 @@ struct globals {
 #define dir          (G.dir         )
 #define svd          (G.svd         )
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	pidchanged = 1; \
 } while (0)
 
 static void fatal2_cannot(const char *m1, const char *m2)
 {
-	bb_perror_msg_and_die("%s: fatal: can't %s%s", dir, m1, m2);
+	bb_perror_msg_and_die("%s: fatal: cannot %s%s", dir, m1, m2);
 	/* was exiting 111 */
 }
 static void fatal_cannot(const char *m)
@@ -129,16 +124,12 @@ static void fatal_cannot(const char *m)
 }
 static void fatal2x_cannot(const char *m1, const char *m2)
 {
-	bb_error_msg_and_die("%s: fatal: can't %s%s", dir, m1, m2);
+	bb_error_msg_and_die("%s: fatal: cannot %s%s", dir, m1, m2);
 	/* was exiting 111 */
-}
-static void warn2_cannot(const char *m1, const char *m2)
-{
-	bb_perror_msg("%s: warning: can't %s%s", dir, m1, m2);
 }
 static void warn_cannot(const char *m)
 {
-	warn2_cannot(m, "");
+	bb_perror_msg("%s: warning: cannot %s", dir, m);
 }
 
 static void s_child(int sig_no UNUSED_PARAM)
@@ -167,25 +158,10 @@ static void update_status(struct svdir *s)
 	ssize_t sz;
 	int fd;
 	svstatus_t status;
-	const char *fstatus ="log/supervise/status";
-	const char *fstatusnew ="log/supervise/status.new";
-	const char *f_stat ="log/supervise/stat";
-	const char *fstatnew ="log/supervise/stat.new";
-	const char *fpid ="log/supervise/pid";
-	const char *fpidnew ="log/supervise/pid.new";
-
-	if (!s->islog) {
-		fstatus += 4;
-		fstatusnew += 4;
-		f_stat += 4;
-		fstatnew += 4;
-		fpid += 4;
-		fpidnew += 4;
-	}
 
 	/* pid */
 	if (pidchanged) {
-		fd = open_trunc_or_warn(fpidnew);
+		fd = open_trunc_or_warn("supervise/pid.new");
 		if (fd < 0)
 			return;
 		if (s->pid) {
@@ -194,13 +170,14 @@ static void update_status(struct svdir *s)
 			write(fd, spid, size);
 		}
 		close(fd);
-		if (rename_or_warn(fpidnew, fpid))
+		if (rename_or_warn("supervise/pid.new",
+				s->islog ? "log/supervise/pid" : "log/supervise/pid"+4))
 			return;
 		pidchanged = 0;
 	}
 
 	/* stat */
-	fd = open_trunc_or_warn(fstatnew);
+	fd = open_trunc_or_warn("supervise/stat.new");
 	if (fd < -1)
 		return;
 
@@ -236,7 +213,8 @@ static void update_status(struct svdir *s)
 		close(fd);
 	}
 
-	rename_or_warn(fstatnew, f_stat);
+	rename_or_warn("supervise/stat.new",
+		s->islog ? "log/supervise/stat" : "log/supervise/stat"+4);
 
 	/* supervise compatibility */
 	memset(&status, 0, sizeof(status));
@@ -252,17 +230,18 @@ static void update_status(struct svdir *s)
 	if (s->ctrl & C_TERM)
 		status.got_term = 1;
 	status.run_or_finish = s->state;
-	fd = open_trunc_or_warn(fstatusnew);
+	fd = open_trunc_or_warn("supervise/status.new");
 	if (fd < 0)
 		return;
 	sz = write(fd, &status, sizeof(status));
 	close(fd);
 	if (sz != sizeof(status)) {
-		warn2_cannot("write ", fstatusnew);
-		unlink(fstatusnew);
+		warn_cannot("write supervise/status.new");
+		unlink("supervise/status.new");
 		return;
 	}
-	rename_or_warn(fstatusnew, fstatus);
+	rename_or_warn("supervise/status.new",
+		s->islog ? "log/supervise/status" : "log/supervise/status"+4);
 }
 
 static unsigned custom(struct svdir *s, char c)
@@ -280,26 +259,26 @@ static unsigned custom(struct svdir *s, char c)
 		if (st.st_mode & S_IXUSR) {
 			pid = vfork();
 			if (pid == -1) {
-				warn2_cannot("vfork for ", a);
+				warn_cannot("vfork for control/?");
 				return 0;
 			}
 			if (pid == 0) {
 				/* child */
 				if (haslog && dup2(logpipe.wr, 1) == -1)
-					warn2_cannot("setup stdout for ", a);
+					warn_cannot("setup stdout for control/?");
 				execl(a, a, (char *) NULL);
-				fatal2_cannot("run ", a);
+				fatal_cannot("run control/?");
 			}
 			/* parent */
 			if (safe_waitpid(pid, &w, 0) == -1) {
-				warn2_cannot("wait for child ", a);
+				warn_cannot("wait for child control/?");
 				return 0;
 			}
 			return WEXITSTATUS(w) == 0;
 		}
 	} else {
 		if (errno != ENOENT)
-			warn2_cannot("stat ", a);
+			warn_cannot("stat control/?");
 	}
 	return 0;
 }
@@ -401,13 +380,13 @@ static int ctrl(struct svdir *s, char c)
 	case 'd': /* down */
 		s->sd_want = W_DOWN;
 		update_status(s);
-		if (s->state == S_RUN)
+		if (s->pid && s->state != S_FINISH)
 			stopservice(s);
 		break;
 	case 'u': /* up */
 		s->sd_want = W_UP;
 		update_status(s);
-		if (s->state == S_DOWN)
+		if (s->pid == 0)
 			startservice(s);
 		break;
 	case 'x': /* exit */
@@ -417,22 +396,22 @@ static int ctrl(struct svdir *s, char c)
 		update_status(s);
 		/* FALLTHROUGH */
 	case 't': /* sig term */
-		if (s->state == S_RUN)
+		if (s->pid && s->state != S_FINISH)
 			stopservice(s);
 		break;
 	case 'k': /* sig kill */
-		if ((s->state == S_RUN) && !custom(s, c))
+		if (s->pid && !custom(s, c))
 			kill(s->pid, SIGKILL);
 		s->state = S_DOWN;
 		break;
 	case 'p': /* sig pause */
-		if ((s->state == S_RUN) && !custom(s, c))
+		if (s->pid && !custom(s, c))
 			kill(s->pid, SIGSTOP);
 		s->ctrl |= C_PAUSE;
 		update_status(s);
 		break;
 	case 'c': /* sig cont */
-		if ((s->state == S_RUN) && !custom(s, c))
+		if (s->pid && !custom(s, c))
 			kill(s->pid, SIGCONT);
 		s->ctrl &= ~C_PAUSE;
 		update_status(s);
@@ -440,7 +419,7 @@ static int ctrl(struct svdir *s, char c)
 	case 'o': /* once */
 		s->sd_want = W_DOWN;
 		update_status(s);
-		if (s->state == S_DOWN)
+		if (!s->pid)
 			startservice(s);
 		break;
 	case 'a': /* sig alarm */
@@ -464,24 +443,9 @@ static int ctrl(struct svdir *s, char c)
 	}
 	return 1;
  sendsig:
-	if ((s->state == S_RUN) && !custom(s, c))
+	if (s->pid && !custom(s, c))
 		kill(s->pid, sig);
 	return 1;
-}
-
-static void open_control(const char *f, struct svdir *s)
-{
-	struct stat st;
-	mkfifo(f, 0600);
-	if (stat(f, &st) == -1)
-		fatal2_cannot("stat ", f);
-	if (!S_ISFIFO(st.st_mode))
-		bb_error_msg_and_die("%s: fatal: %s exists but is not a fifo", dir, f);
-	s->fdcontrol = xopen(f, O_RDONLY|O_NDELAY);
-	close_on_exec_on(s->fdcontrol);
-	s->fdcontrolwrite = xopen(f, O_WRONLY|O_NDELAY);
-	close_on_exec_on(s->fdcontrolwrite);
-	update_status(s);
 }
 
 int runsv_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
@@ -583,9 +547,19 @@ int runsv_main(int argc UNUSED_PARAM, char **argv)
 		close_on_exec_on(svd[1].fdlock);
 	}
 
-	open_control("log/supervise/control"+4, &svd[0]);
+	mkfifo("log/supervise/control"+4, 0600);
+	svd[0].fdcontrol = xopen("log/supervise/control"+4, O_RDONLY|O_NDELAY);
+	close_on_exec_on(svd[0].fdcontrol);
+	svd[0].fdcontrolwrite = xopen("log/supervise/control"+4, O_WRONLY|O_NDELAY);
+	close_on_exec_on(svd[0].fdcontrolwrite);
+	update_status(&svd[0]);
 	if (haslog) {
-		open_control("log/supervise/control", &svd[1]);
+		mkfifo("log/supervise/control", 0600);
+		svd[1].fdcontrol = xopen("log/supervise/control", O_RDONLY|O_NDELAY);
+		close_on_exec_on(svd[1].fdcontrol);
+		svd[1].fdcontrolwrite = xopen("log/supervise/control", O_WRONLY|O_NDELAY);
+		close_on_exec_on(svd[1].fdcontrolwrite);
+		update_status(&svd[1]);
 	}
 	mkfifo("log/supervise/ok"+4, 0600);
 	fd = xopen("log/supervise/ok"+4, O_RDONLY|O_NDELAY);

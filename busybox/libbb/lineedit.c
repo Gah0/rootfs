@@ -13,6 +13,7 @@
  *
  * This code is 'as is' with no warranty.
  */
+
 /*
  * Usage and known bugs:
  * Terminal key codes are not extensive, more needs to be added.
@@ -22,6 +23,9 @@
  * Ctrl-E also works as End.
  *
  * The following readline-like commands are not implemented:
+ * ESC-b -- Move back one word
+ * ESC-f -- Move forward one word
+ * ESC-d -- Delete forward one word
  * CTL-t -- Transpose two characters
  *
  * lineedit does not know that the terminal escape sequences do not
@@ -37,9 +41,13 @@
  *
  * Unicode in PS1 is not fully supported: prompt length calulation is wrong,
  * resulting in line wrap problems with long (multi-line) input.
+ *
+ * Multi-line PS1 (e.g. PS1="\n[\w]\n$ ") has problems with history
+ * browsing: up/down arrows result in scrolling.
+ * It stems from simplistic "cmdedit_y = cmdedit_prmt_len / cmdedit_termw"
+ * calculation of how many lines the prompt takes.
  */
-#include "busybox.h"
-#include "NUM_APPLETS.h"
+#include "libbb.h"
 #include "unicode.h"
 #ifndef _POSIX_VDISABLE
 # define _POSIX_VDISABLE '\0'
@@ -70,20 +78,11 @@
 #if ENABLE_UNICODE_SUPPORT
 # define BB_NUL ((wchar_t)0)
 # define CHAR_T wchar_t
-static bool BB_isspace(CHAR_T c)
-{
-	return ((unsigned)c < 256 && isspace(c));
-}
+static bool BB_isspace(CHAR_T c) { return ((unsigned)c < 256 && isspace(c)); }
 # if ENABLE_FEATURE_EDITING_VI
-static bool BB_isalnum_or_underscore(CHAR_T c)
-{
-	return ((unsigned)c < 256 && isalnum(c)) || c == '_';
-}
+static bool BB_isalnum(CHAR_T c) { return ((unsigned)c < 256 && isalnum(c)); }
 # endif
-static bool BB_ispunct(CHAR_T c)
-{
-	return ((unsigned)c < 256 && ispunct(c));
-}
+static bool BB_ispunct(CHAR_T c) { return ((unsigned)c < 256 && ispunct(c)); }
 # undef isspace
 # undef isalnum
 # undef ispunct
@@ -96,12 +95,7 @@ static bool BB_ispunct(CHAR_T c)
 # define BB_NUL '\0'
 # define CHAR_T char
 # define BB_isspace(c) isspace(c)
-# if ENABLE_FEATURE_EDITING_VI
-static bool BB_isalnum_or_underscore(CHAR_T c)
-{
-	return ((unsigned)c < 256 && isalnum(c)) || c == '_';
-}
-# endif
+# define BB_isalnum(c) isalnum(c)
 # define BB_ispunct(c) ispunct(c)
 #endif
 #if ENABLE_UNICODE_PRESERVE_BROKEN
@@ -132,11 +126,12 @@ static const char null_str[] ALIGN1 = "";
 struct lineedit_statics {
 	line_input_t *state;
 
-	unsigned cmdedit_termw; /* = 80; */ /* actual terminal width */
+	volatile unsigned cmdedit_termw; /* = 80; */ /* actual terminal width */
+	sighandler_t previous_SIGWINCH_handler;
 
 	unsigned cmdedit_x;        /* real x (col) terminal position */
 	unsigned cmdedit_y;        /* pseudoreal y (row) terminal position */
-	unsigned cmdedit_prmt_len; /* on-screen length of last/sole prompt line */
+	unsigned cmdedit_prmt_len; /* length of prompt (without colors etc) */
 
 	unsigned cursor;
 	int command_len; /* must be signed */
@@ -146,7 +141,6 @@ struct lineedit_statics {
 	CHAR_T *command_ps;
 
 	const char *cmdedit_prompt;
-	const char *prompt_last_line;  /* last/sole prompt line */
 
 #if ENABLE_USERNAME_OR_HOMEDIR
 	char *user_buf;
@@ -158,25 +152,14 @@ struct lineedit_statics {
 	unsigned num_matches;
 #endif
 
-#if ENABLE_FEATURE_EDITING_WINCH
-	unsigned SIGWINCH_saved;
-	volatile unsigned SIGWINCH_count;
-	volatile smallint ok_to_redraw;
-#endif
-
 #if ENABLE_FEATURE_EDITING_VI
 # define DELBUFSIZ 128
-	smallint newdelflag;     /* whether delbuf should be reused yet */
 	CHAR_T *delptr;
+	smallint newdelflag;     /* whether delbuf should be reused yet */
 	CHAR_T delbuf[DELBUFSIZ];  /* a place to store deleted characters */
 #endif
 #if ENABLE_FEATURE_EDITING_ASK_TERMINAL
 	smallint sent_ESC_br6n;
-#endif
-
-#if ENABLE_FEATURE_EDITING_WINCH
-	/* Largish struct, keeping it last results in smaller code */
-	struct sigaction SIGWINCH_handler;
 #endif
 };
 
@@ -186,6 +169,7 @@ extern struct lineedit_statics *const lineedit_ptr_to_statics;
 #define S (*lineedit_ptr_to_statics)
 #define state            (S.state           )
 #define cmdedit_termw    (S.cmdedit_termw   )
+#define previous_SIGWINCH_handler (S.previous_SIGWINCH_handler)
 #define cmdedit_x        (S.cmdedit_x       )
 #define cmdedit_y        (S.cmdedit_y       )
 #define cmdedit_prmt_len (S.cmdedit_prmt_len)
@@ -193,7 +177,6 @@ extern struct lineedit_statics *const lineedit_ptr_to_statics;
 #define command_len      (S.command_len     )
 #define command_ps       (S.command_ps      )
 #define cmdedit_prompt   (S.cmdedit_prompt  )
-#define prompt_last_line (S.prompt_last_line)
 #define user_buf         (S.user_buf        )
 #define home_pwd_buf     (S.home_pwd_buf    )
 #define matches          (S.matches         )
@@ -203,7 +186,7 @@ extern struct lineedit_statics *const lineedit_ptr_to_statics;
 #define delbuf           (S.delbuf          )
 
 #define INIT_S() do { \
-	(*(struct lineedit_statics**)not_const_pp(&lineedit_ptr_to_statics)) = xzalloc(sizeof(S)); \
+	(*(struct lineedit_statics**)&lineedit_ptr_to_statics) = xzalloc(sizeof(S)); \
 	barrier(); \
 	cmdedit_termw = 80; \
 	IF_USERNAME_OR_HOMEDIR(home_pwd_buf = (char*)null_str;) \
@@ -437,8 +420,7 @@ static void put_till_end_and_adv_cursor(void)
 static void goto_new_line(void)
 {
 	put_till_end_and_adv_cursor();
-	/* "cursor == 0" is only if prompt is "" and user input is empty */
-	if (cursor == 0 || cmdedit_x != 0)
+	if (cmdedit_x != 0)
 		bb_putchar('\n');
 }
 
@@ -447,19 +429,17 @@ static void beep(void)
 	bb_putchar('\007');
 }
 
-/* Full or last/sole prompt line, reset edit cursor, calculate terminal cursor.
- * cmdedit_y is always calculated for the last/sole prompt line.
- */
-static void put_prompt_custom(bool is_full)
+static void put_prompt(void)
 {
-	fputs((is_full ? cmdedit_prompt : prompt_last_line), stdout);
-	cursor = 0;
-	cmdedit_y = cmdedit_prmt_len / cmdedit_termw; /* new quasireal y */
-	cmdedit_x = cmdedit_prmt_len % cmdedit_termw;
-}
+	unsigned w;
 
-#define put_prompt_last_line() put_prompt_custom(0)
-#define put_prompt()           put_prompt_custom(1)
+	fputs(cmdedit_prompt, stdout);
+	fflush_all();
+	cursor = 0;
+	w = cmdedit_termw; /* read volatile var once */
+	cmdedit_y = cmdedit_prmt_len / w; /* new quasireal y */
+	cmdedit_x = cmdedit_prmt_len % w;
+}
 
 /* Move back one character */
 /* (optimized for slow terminals) */
@@ -525,16 +505,18 @@ static void input_backward(unsigned num)
 		printf("\r" ESC"[%uA", cmdedit_y);
 		cmdedit_y = 0;
 		sv_cursor = cursor;
-		put_prompt_last_line(); /* sets cursor to 0 */
+		put_prompt(); /* sets cursor to 0 */
 		while (cursor < sv_cursor)
 			put_cur_glyph_and_inc_cursor();
 	} else {
 		int lines_up;
+		unsigned width;
 		/* num = chars to go back from the beginning of current line: */
 		num -= cmdedit_x;
+		width = cmdedit_termw; /* read volatile var once */
 		/* num=1...w: one line up, w+1...2w: two, etc: */
-		lines_up = 1 + (num - 1) / cmdedit_termw;
-		cmdedit_x = (cmdedit_termw * cmdedit_y - num) % cmdedit_termw;
+		lines_up = 1 + (num - 1) / width;
+		cmdedit_x = (width * cmdedit_y - num) % width;
 		cmdedit_y -= lines_up;
 		/* go to 1st column; go up */
 		printf("\r" ESC"[%uA", lines_up);
@@ -546,26 +528,17 @@ static void input_backward(unsigned num)
 	}
 }
 
-/* See redraw and draw_full below */
-static void draw_custom(int y, int back_cursor, bool is_full)
+/* draw prompt, editor line, and clear tail */
+static void redraw(int y, int back_cursor)
 {
 	if (y > 0) /* up y lines */
 		printf(ESC"[%uA", y);
 	bb_putchar('\r');
-	put_prompt_custom(is_full);
+	put_prompt();
 	put_till_end_and_adv_cursor();
 	printf(SEQ_CLEAR_TILL_END_OF_SCREEN);
 	input_backward(back_cursor);
 }
-
-/* Move y lines up, draw last/sole prompt line, editor line[s], and clear tail.
- * goal: redraw the prompt+input+cursor in-place, overwriting the previous */
-#define redraw(y, back_cursor) draw_custom((y), (back_cursor), 0)
-
-/* Like above, but without moving up, and while using all the prompt lines.
- * goal: draw a full prompt+input+cursor unrelated to a previous position.
- * note: cmdedit_y always ends up relating to the last/sole prompt line */
-#define draw_full(back_cursor) draw_custom(0, (back_cursor), 1)
 
 /* Delete the char in front of the cursor, optionally saving it
  * for later putback */
@@ -658,18 +631,6 @@ static void free_tab_completion_data(void)
 
 static void add_match(char *matched)
 {
-	unsigned char *p = (unsigned char*)matched;
-	while (*p) {
-		/* ESC attack fix: drop any string with control chars */
-		if (*p < ' '
-		 || (!ENABLE_UNICODE_SUPPORT && *p >= 0x7f)
-		 || (ENABLE_UNICODE_SUPPORT && *p == 0x7f)
-		) {
-			free(matched);
-			return;
-		}
-		p++;
-	}
 	matches = xrealloc_vector(matches, 4, num_matches);
 	matches[num_matches] = matched;
 	num_matches++;
@@ -711,20 +672,23 @@ static char *username_path_completion(char *ud)
  */
 static NOINLINE unsigned complete_username(const char *ud)
 {
-	struct passwd *pw;
+	/* Using _r function to avoid pulling in static buffers */
+	char line_buff[256];
+	struct passwd pwd;
+	struct passwd *result;
 	unsigned userlen;
 
 	ud++; /* skip ~ */
 	userlen = strlen(ud);
 
 	setpwent();
-	while ((pw = getpwent()) != NULL) {
+	while (!getpwent_r(&pwd, line_buff, sizeof(line_buff), &result)) {
 		/* Null usernames should result in all users as possible completions. */
-		if (/* !ud[0] || */ is_prefixed_with(pw->pw_name, ud)) {
-			add_match(xasprintf("~%s/", pw->pw_name));
+		if (/*!userlen || */ strncmp(ud, pwd.pw_name, userlen) == 0) {
+			add_match(xasprintf("~%s/", pwd.pw_name));
 		}
 	}
-	endpwent(); /* don't keep password file open */
+	endpwent();
 
 	return 1 + userlen;
 }
@@ -813,30 +777,6 @@ static NOINLINE unsigned complete_cmd_dir_file(const char *command, int type)
 	}
 	pf_len = strlen(pfind);
 
-	if (type == FIND_EXE_ONLY && !dirbuf) {
-# if ENABLE_FEATURE_SH_STANDALONE && NUM_APPLETS != 1
-		const char *p = applet_names;
-		while (*p) {
-			if (strncmp(pfind, p, pf_len) == 0)
-				add_match(xstrdup(p));
-			while (*p++ != '\0')
-				continue;
-		}
-# endif
-# if EDITING_HAS_get_exe_name
-		if (state->get_exe_name) {
-			i = 0;
-			for (;;) {
-				const char *b = state->get_exe_name(i++);
-				if (!b)
-					break;
-				if (strncmp(pfind, b, pf_len) == 0)
-					add_match(xstrdup(b));
-			}
-		}
-# endif
-	}
-
 	for (i = 0; i < npaths; i++) {
 		DIR *dir;
 		struct dirent *next;
@@ -855,7 +795,7 @@ static NOINLINE unsigned complete_cmd_dir_file(const char *command, int type)
 			if (!pfind[0] && DOT_OR_DOTDOT(name_found))
 				continue;
 			/* match? */
-			if (!is_prefixed_with(name_found, pfind))
+			if (strncmp(name_found, pfind, pf_len) != 0)
 				continue; /* no */
 
 			found = concat_path_file(paths[i], name_found);
@@ -1104,7 +1044,7 @@ static void showfiles(void)
 			);
 		}
 		if (ENABLE_UNICODE_SUPPORT)
-			puts(printable_string(matches[n]));
+			puts(printable_string(NULL, matches[n]));
 		else
 			puts(matches[n]);
 	}
@@ -1154,7 +1094,7 @@ static NOINLINE void input_tab(smallint *lastWasTab)
 			int sav_cursor = cursor;
 			goto_new_line();
 			showfiles();
-			draw_full(command_len - sav_cursor);
+			redraw(0, command_len - sav_cursor);
 		}
 		return;
 	}
@@ -1315,7 +1255,6 @@ line_input_t* FAST_FUNC new_line_input_t(int flags)
 {
 	line_input_t *n = xzalloc(sizeof(*n));
 	n->flags = flags;
-	n->timeout = -1;
 #if MAX_HISTORY > 0
 	n->max_history = MAX_HISTORY;
 #endif
@@ -1391,16 +1330,6 @@ void FAST_FUNC show_history(const line_input_t *st)
 		printf("%4d %s\n", i, st->history[i]);
 }
 
-void FAST_FUNC free_line_input_t(line_input_t *n)
-{
-# if ENABLE_FEATURE_EDITING_SAVEHISTORY
-	int i = n->cnt_history;
-	while (i > 0)
-		free(n->history[--i]);
-#endif
-	free(n);
-}
-
 # if ENABLE_FEATURE_EDITING_SAVEHISTORY
 /* We try to ensure that concurrent additions to the history
  * do not overwrite each other.
@@ -1409,6 +1338,14 @@ void FAST_FUNC free_line_input_t(line_input_t *n)
  * History file is trimmed lazily, when it grows several times longer
  * than configured MAX_HISTORY lines.
  */
+
+static void free_line_input_t(line_input_t *n)
+{
+	int i = n->cnt_history;
+	while (i > 0)
+		free(n->history[--i]);
+	free(n);
+}
 
 /* state->flags is already checked to be nonzero */
 static void load_history(line_input_t *st_parm)
@@ -1638,9 +1575,9 @@ vi_word_motion(int eat)
 {
 	CHAR_T *command = command_ps;
 
-	if (BB_isalnum_or_underscore(command[cursor])) {
+	if (BB_isalnum(command[cursor]) || command[cursor] == '_') {
 		while (cursor < command_len
-		 && (BB_isalnum_or_underscore(command[cursor+1]))
+		 && (BB_isalnum(command[cursor+1]) || command[cursor+1] == '_')
 		) {
 			input_forward();
 		}
@@ -1682,9 +1619,9 @@ vi_end_motion(void)
 		input_forward();
 	if (cursor >= command_len-1)
 		return;
-	if (BB_isalnum_or_underscore(command[cursor])) {
+	if (BB_isalnum(command[cursor]) || command[cursor] == '_') {
 		while (cursor < command_len-1
-		 && (BB_isalnum_or_underscore(command[cursor+1]))
+		 && (BB_isalnum(command[cursor+1]) || command[cursor+1] == '_')
 		) {
 			input_forward();
 		}
@@ -1717,9 +1654,9 @@ vi_back_motion(void)
 		input_backward(1);
 	if (cursor <= 0)
 		return;
-	if (BB_isalnum_or_underscore(command[cursor])) {
+	if (BB_isalnum(command[cursor]) || command[cursor] == '_') {
 		while (cursor > 0
-		 && (BB_isalnum_or_underscore(command[cursor-1]))
+		 && (BB_isalnum(command[cursor-1]) || command[cursor-1] == '_')
 		) {
 			input_backward(1);
 		}
@@ -1832,37 +1769,14 @@ static void ask_terminal(void)
 #define ask_terminal() ((void)0)
 #endif
 
-/* Note about multi-line PS1 (e.g. "\n\w \u@\h\n> ") and prompt redrawing:
- *
- * If the prompt has any newlines, after we print it once we use only its last
- * line to redraw in-place, which makes it simpler to calculate how many lines
- * we should move the cursor up to align the redraw (cmdedit_y). The earlier
- * prompt lines just stay on screen and we redraw below them.
- *
- * Use cases for all prompt lines beyond the initial draw:
- * - After clear-screen (^L) or after displaying tab-completion choices, we
- *   print the full prompt, as it isn't redrawn in-place.
- * - During terminal resize we could try to redraw all lines, but we don't,
- *   because it requires delicate alignment, it's good enough with only the
- *   last line, and doing it wrong is arguably worse than not doing it at all.
- *
- * Terminology wise, if it doesn't mention "full", then it means the last/sole
- * prompt line. We use the prompt (last/sole line) while redrawing in-place,
- * and the full where we need a fresh one unrelated to an earlier position.
- *
- * If PS1 is not multiline, the last/sole line and the full are the same string.
- */
-
 /* Called just once at read_line_input() init time */
 #if !ENABLE_FEATURE_EDITING_FANCY_PROMPT
 static void parse_and_put_prompt(const char *prmt_ptr)
 {
 	const char *p;
-	cmdedit_prompt = prompt_last_line = prmt_ptr;
+	cmdedit_prompt = prmt_ptr;
 	p = strrchr(prmt_ptr, '\n');
-	if (p)
-		prompt_last_line = p + 1;
-	cmdedit_prmt_len = unicode_strwidth(prompt_last_line);
+	cmdedit_prmt_len = unicode_strwidth(p ? p+1 : prmt_ptr);
 	put_prompt();
 }
 #else
@@ -1968,16 +1882,15 @@ static void parse_and_put_prompt(const char *prmt_ptr)
 						cwd_buf = xrealloc_getcwd_or_warn(NULL);
 						if (!cwd_buf)
 							cwd_buf = (char *)bb_msg_unknown;
-						else if (home_pwd_buf[0]) {
-							char *after_home_user;
-
+						else {
 							/* /home/user[/something] -> ~[/something] */
-							after_home_user = is_prefixed_with(cwd_buf, home_pwd_buf);
-							if (after_home_user
-							 && (*after_home_user == '/' || *after_home_user == '\0')
+							l = strlen(home_pwd_buf);
+							if (l != 0
+							 && strncmp(home_pwd_buf, cwd_buf, l) == 0
+							 && (cwd_buf[l] == '/' || cwd_buf[l] == '\0')
 							) {
 								cwd_buf[0] = '~';
-								overlapping_strcpy(cwd_buf + 1, after_home_user);
+								overlapping_strcpy(cwd_buf + 1, cwd_buf + l);
 							}
 						}
 					}
@@ -2046,41 +1959,34 @@ static void parse_and_put_prompt(const char *prmt_ptr)
 	if (cwd_buf != (char *)bb_msg_unknown)
 		free(cwd_buf);
 # endif
-	/* see comment (above this function) about multiline prompt redrawing */
-	cmdedit_prompt = prompt_last_line = prmt_mem_ptr;
-	prmt_ptr = strrchr(cmdedit_prompt, '\n');
-	if (prmt_ptr)
-		prompt_last_line = prmt_ptr + 1;
+	cmdedit_prompt = prmt_mem_ptr;
 	put_prompt();
 }
 #endif
 
-#if ENABLE_FEATURE_EDITING_WINCH
-static void cmdedit_setwidth(void)
+static void cmdedit_setwidth(unsigned w, int redraw_flg)
 {
-	int new_y;
-
-	cmdedit_termw = get_terminal_width(STDIN_FILENO);
-	/* new y for current cursor */
-	new_y = (cursor + cmdedit_prmt_len) / cmdedit_termw;
-	/* redraw */
-	redraw((new_y >= cmdedit_y ? new_y : cmdedit_y), command_len - cursor);
-}
-
-static void win_changed(int nsig UNUSED_PARAM)
-{
-	if (S.ok_to_redraw) {
-		/* We are in read_key(), safe to redraw immediately */
-		int sv_errno = errno;
-		cmdedit_setwidth();
+	cmdedit_termw = w;
+	if (redraw_flg) {
+		/* new y for current cursor */
+		int new_y = (cursor + cmdedit_prmt_len) / w;
+		/* redraw */
+		redraw((new_y >= cmdedit_y ? new_y : cmdedit_y), command_len - cursor);
 		fflush_all();
-		errno = sv_errno;
-	} else {
-		/* Signal main loop that redraw is necessary */
-		S.SIGWINCH_count++;
 	}
 }
-#endif
+
+static void win_changed(int nsig)
+{
+	int sv_errno = errno;
+	unsigned width;
+
+	get_terminal_width_height(0, &width, NULL);
+//FIXME: cmdedit_setwidth() -> redraw() -> printf() -> KABOOM! (we are in signal handler!)
+	cmdedit_setwidth(width, /*redraw_flg:*/ nsig);
+
+	errno = sv_errno;
+}
 
 static int lineedit_read_key(char *read_key_buffer, int timeout)
 {
@@ -2090,7 +1996,6 @@ static int lineedit_read_key(char *read_key_buffer, int timeout)
 	int unicode_idx = 0;
 #endif
 
-	fflush_all();
 	while (1) {
 		/* Wait for input. TIMEOUT = -1 makes read_key wait even
 		 * on nonblocking stdin, TIMEOUT = 50 makes sure we won't
@@ -2099,9 +2004,7 @@ static int lineedit_read_key(char *read_key_buffer, int timeout)
 		 *
 		 * Note: read_key sets errno to 0 on success.
 		 */
-		IF_FEATURE_EDITING_WINCH(S.ok_to_redraw = 1;)
 		ic = read_key(STDIN_FILENO, read_key_buffer, timeout);
-		IF_FEATURE_EDITING_WINCH(S.ok_to_redraw = 0;)
 		if (errno) {
 #if ENABLE_UNICODE_SUPPORT
 			if (errno == EAGAIN && unicode_idx != 0)
@@ -2210,7 +2113,7 @@ enum {
  * Backspace deletes last matched char.
  * Control keys exit search and return to normal editing (at current history line).
  */
-static int32_t reverse_i_search(int timeout)
+static int32_t reverse_i_search(void)
 {
 	char match_buf[128]; /* for user input */
 	char read_key_buffer[KEYCODE_BUFFER_SIZE];
@@ -2224,7 +2127,7 @@ static int32_t reverse_i_search(int timeout)
 	match_buf[0] = '\0';
 
 	/* Save and replace the prompt */
-	saved_prompt = prompt_last_line;
+	saved_prompt = cmdedit_prompt;
 	saved_prmt_len = cmdedit_prmt_len;
 	goto set_prompt;
 
@@ -2232,8 +2135,9 @@ static int32_t reverse_i_search(int timeout)
 		int h;
 		unsigned match_buf_len = strlen(match_buf);
 
-//FIXME: correct timeout? (i.e. count it down?)
-		ic = lineedit_read_key(read_key_buffer, timeout);
+		fflush_all();
+//FIXME: correct timeout?
+		ic = lineedit_read_key(read_key_buffer, -1);
 
 		switch (ic) {
 		case CTRL('R'): /* searching for the next match */
@@ -2297,10 +2201,10 @@ static int32_t reverse_i_search(int timeout)
 					cursor = match - matched_history_line;
 //FIXME: cursor position for Unicode case
 
-					free((char*)prompt_last_line);
+					free((char*)cmdedit_prompt);
  set_prompt:
-					prompt_last_line = xasprintf("(reverse-i-search)'%s': ", match_buf);
-					cmdedit_prmt_len = unicode_strwidth(prompt_last_line);
+					cmdedit_prompt = xasprintf("(reverse-i-search)'%s': ", match_buf);
+					cmdedit_prmt_len = unicode_strwidth(cmdedit_prompt);
 					goto do_redraw;
 				}
 			}
@@ -2320,8 +2224,8 @@ static int32_t reverse_i_search(int timeout)
 	if (matched_history_line)
 		command_len = load_string(matched_history_line);
 
-	free((char*)prompt_last_line);
-	prompt_last_line = saved_prompt;
+	free((char*)cmdedit_prompt);
+	cmdedit_prompt = saved_prompt;
 	cmdedit_prmt_len = saved_prmt_len;
 	redraw(cmdedit_y, command_len - cursor);
 
@@ -2329,29 +2233,15 @@ static int32_t reverse_i_search(int timeout)
 }
 #endif
 
-#if ENABLE_FEATURE_EDITING_WINCH
-static void sigaction2(int sig, struct sigaction *act)
-{
-	// Grr... gcc 8.1.1:
-	// "passing argument 3 to restrict-qualified parameter aliases with argument 2"
-	// dance around that...
-	struct sigaction *oact FIX_ALIASING;
-	oact = act;
-	sigaction(sig, act, oact);
-}
-#endif
-
 /* maxsize must be >= 2.
  * Returns:
  * -1 on read errors or EOF, or on bare Ctrl-D,
  * 0  on ctrl-C (the line entered is still returned in 'command'),
- * (in both cases the cursor remains on the input line, '\n' is not printed)
  * >0 length of input string, including terminating '\n'
  */
-int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *command, int maxsize)
+int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *command, int maxsize, int timeout)
 {
-	int len, n;
-	int timeout;
+	int len;
 #if ENABLE_FEATURE_TAB_COMPLETION
 	smallint lastWasTab = 0;
 #endif
@@ -2365,17 +2255,16 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 
 	INIT_S();
 
-	n = get_termios_and_make_raw(STDIN_FILENO, &new_settings, &initial_settings, 0
-		| TERMIOS_CLEAR_ISIG /* turn off INTR (ctrl-C), QUIT, SUSP */
-	);
-	if (n != 0 || (initial_settings.c_lflag & (ECHO|ICANON)) == ICANON) {
+	if (tcgetattr(STDIN_FILENO, &initial_settings) < 0
+	 || (initial_settings.c_lflag & (ECHO|ICANON)) == ICANON
+	) {
 		/* Happens when e.g. stty -echo was run before.
 		 * But if ICANON is not set, we don't come here.
 		 * (example: interactive python ^Z-backgrounded,
 		 * tty is still in "raw mode").
 		 */
 		parse_and_put_prompt(prompt);
-		fflush_all();
+		/* fflush_all(); - done by parse_and_put_prompt */
 		if (fgets(command, maxsize, stdin) == NULL)
 			len = -1; /* EOF or error */
 		else
@@ -2391,24 +2280,16 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 		maxsize = MAX_LINELEN;
 	S.maxsize = maxsize;
 
-	timeout = -1;
-	/* Make state->flags == 0 if st is NULL.
-	 * With zeroed flags, no other fields are ever referenced.
-	 */
-	state = (line_input_t*) &const_int_0;
-	if (st) {
-		state = st;
-		timeout = st->timeout;
-	}
+	/* With zero flags, no other fields are ever used */
+	state = st ? st : (line_input_t*) &const_int_0;
 #if MAX_HISTORY > 0
-	if (state->flags & DO_HISTORY) {
 # if ENABLE_FEATURE_EDITING_SAVEHISTORY
-		if (state->hist_file)
-			if (state->cnt_history == 0)
-				load_history(state);
+	if (state->hist_file)
+		if (state->cnt_history == 0)
+			load_history(state);
 # endif
+	if (state->flags & DO_HISTORY)
 		state->cur_history = state->cnt_history;
-	}
 #endif
 
 	/* prepare before init handlers */
@@ -2422,6 +2303,18 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 #endif
 #define command command_must_not_be_used
 
+	new_settings = initial_settings;
+	/* ~ICANON: unbuffered input (most c_cc[] are disabled, VMIN/VTIME are enabled) */
+	/* ~ECHO, ~ECHONL: turn off echoing, including newline echoing */
+	/* ~ISIG: turn off INTR (ctrl-C), QUIT, SUSP */
+	new_settings.c_lflag &= ~(ICANON | ECHO | ECHONL | ISIG);
+	/* reads would block only if < 1 char is available */
+	new_settings.c_cc[VMIN] = 1;
+	/* no timeout (reads block forever) */
+	new_settings.c_cc[VTIME] = 0;
+	/* Should be not needed if ISIG is off: */
+	/* Turn off CTRL-C */
+	/* new_settings.c_cc[VINTR] = _POSIX_VDISABLE; */
 	tcsetattr_stdin_TCSANOW(&new_settings);
 
 #if ENABLE_USERNAME_OR_HOMEDIR
@@ -2442,18 +2335,15 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 	bb_error_msg("cur_history:%d cnt_history:%d", state->cur_history, state->cnt_history);
 #endif
 
-	/* Get width (before printing prompt) */
-	cmdedit_termw = get_terminal_width(STDIN_FILENO);
 	/* Print out the command prompt, optionally ask where cursor is */
 	parse_and_put_prompt(prompt);
 	ask_terminal();
 
-#if ENABLE_FEATURE_EDITING_WINCH
 	/* Install window resize handler (NB: after *all* init is complete) */
-	S.SIGWINCH_handler.sa_handler = win_changed;
-	S.SIGWINCH_handler.sa_flags = SA_RESTART;
-	sigaction2(SIGWINCH, &S.SIGWINCH_handler);
-#endif
+//FIXME: save entire sigaction!
+	previous_SIGWINCH_handler = signal(SIGWINCH, win_changed);
+	win_changed(0); /* get initial window size */
+
 	read_key_buffer[0] = 0;
 	while (1) {
 		/*
@@ -2465,15 +2355,8 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 		 * in one place.
 		 */
 		int32_t ic, ic_raw;
-#if ENABLE_FEATURE_EDITING_WINCH
-		unsigned count;
 
-		count = S.SIGWINCH_count;
-		if (S.SIGWINCH_saved != count) {
-			S.SIGWINCH_saved = count;
-			cmdedit_setwidth();
-		}
-#endif
+		fflush_all();
 		ic = ic_raw = lineedit_read_key(read_key_buffer, timeout);
 
 #if ENABLE_FEATURE_REVERSE_SEARCH
@@ -2545,9 +2428,8 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 		case CTRL('L'):
 		vi_case(CTRL('L')|VI_CMDMODE_BIT:)
 			/* Control-l -- clear screen */
-			/* cursor to top,left; clear to the end of screen */
-			printf(ESC"[H" ESC"[J");
-			draw_full(command_len - cursor);
+			printf(ESC"[H"); /* cursor to top,left */
+			redraw(0, command_len - cursor);
 			break;
 #if MAX_HISTORY > 0
 		case CTRL('N'):
@@ -2583,27 +2465,9 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 			while (cursor > 0 && !BB_isspace(command_ps[cursor-1]))
 				input_backspace();
 			break;
-		case KEYCODE_ALT_D: {
-			/* Delete word forward */
-			int nc, sc = cursor;
-			ctrl_right();
-			nc = cursor - sc;
-			input_backward(nc);
-			while (--nc >= 0)
-				input_delete(1);
-			break;
-		}
-		case KEYCODE_ALT_BACKSPACE: {
-			/* Delete word backward */
-			int sc = cursor;
-			ctrl_left();
-			while (sc-- > cursor)
-				input_delete(1);
-			break;
-		}
 #if ENABLE_FEATURE_REVERSE_SEARCH
 		case CTRL('R'):
-			ic = ic_raw = reverse_i_search(timeout);
+			ic = ic_raw = reverse_i_search();
 			goto again;
 #endif
 
@@ -2743,6 +2607,44 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 				vi_cmdmode = 1;
 				input_backward(1);
 			}
+			/* Handle a few ESC-<key> combinations the same way
+			 * standard readline bindings (IOW: bash) do.
+			 * Often, Alt-<key> generates ESC-<key>.
+			 */
+			ic = lineedit_read_key(read_key_buffer, 50);
+			switch (ic) {
+				//case KEYCODE_LEFT: - bash doesn't do this
+				case 'b':
+					ctrl_left();
+					break;
+				//case KEYCODE_RIGHT: - bash doesn't do this
+				case 'f':
+					ctrl_right();
+					break;
+				//case KEYCODE_DELETE: - bash doesn't do this
+				case 'd':  /* Alt-D */
+				{
+					/* Delete word forward */
+					int nc, sc = cursor;
+					ctrl_right();
+					nc = cursor - sc;
+					input_backward(nc);
+					while (--nc >= 0)
+						input_delete(1);
+					break;
+				}
+				case '\b':   /* Alt-Backspace(?) */
+				case '\x7f': /* Alt-Backspace(?) */
+				//case 'w': - bash doesn't do this
+				{
+					/* Delete word backward */
+					int sc = cursor;
+					ctrl_left();
+					while (sc-- > cursor)
+						input_delete(1);
+					break;
+				}
+			}
 			break;
 #endif /* FEATURE_COMMAND_EDITING_VI */
 
@@ -2790,6 +2692,7 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 			 && ic_raw == initial_settings.c_cc[VINTR]
 			) {
 				/* Ctrl-C (usually) - stop gathering input */
+				goto_new_line();
 				command_len = 0;
 				break_out = -1; /* "do not append '\n'" */
 				break;
@@ -2910,10 +2813,8 @@ int FAST_FUNC read_line_input(line_input_t *st, const char *prompt, char *comman
 
 	/* restore initial_settings */
 	tcsetattr_stdin_TCSANOW(&initial_settings);
-#if ENABLE_FEATURE_EDITING_WINCH
 	/* restore SIGWINCH handler */
-	sigaction_set(SIGWINCH, &S.SIGWINCH_handler);
-#endif
+	signal(SIGWINCH, previous_SIGWINCH_handler);
 	fflush_all();
 
 	len = command_len;
@@ -2954,7 +2855,7 @@ int main(int argc, char **argv)
 #if ENABLE_FEATURE_EDITING_FANCY_PROMPT
 		"\\[\\033[32;1m\\]\\u@\\[\\x1b[33;1m\\]\\h:"
 		"\\[\\033[34;1m\\]\\w\\[\\033[35;1m\\] "
-		"\\!\\[\\e[36;1m\\]\\$ \\[\\E[m\\]";
+		"\\!\\[\\e[36;1m\\]\\$ \\[\\E[0m\\]";
 #else
 		"% ";
 #endif

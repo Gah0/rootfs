@@ -113,8 +113,9 @@ void fallbackQSort3(uint32_t* fmap,
 		int32_t   loSt,
 		int32_t   hiSt)
 {
-	int32_t sp;
-	uint32_t r;
+	int32_t unLo, unHi, ltLo, gtHi, n, m;
+	int32_t sp, lo, hi;
+	uint32_t med, r, r3;
 	int32_t stackLo[FALLBACK_QSORT_STACK_SIZE];
 	int32_t stackHi[FALLBACK_QSORT_STACK_SIZE];
 
@@ -124,11 +125,6 @@ void fallbackQSort3(uint32_t* fmap,
 	fpush(loSt, hiSt);
 
 	while (sp > 0) {
-		int32_t unLo, unHi, ltLo, gtHi, n, m;
-		int32_t lo, hi;
-		uint32_t med;
-		uint32_t r3;
-
 		AssertH(sp < FALLBACK_QSORT_STACK_SIZE - 1, 1004);
 
 		fpop(lo, hi);
@@ -165,7 +161,7 @@ void fallbackQSort3(uint32_t* fmap,
 					ltLo++;
 					unLo++;
 					continue;
-				}
+				};
 				if (n > 0) break;
 				unLo++;
 			}
@@ -176,7 +172,7 @@ void fallbackQSort3(uint32_t* fmap,
 					mswap(fmap[unHi], fmap[gtHi]);
 					gtHi--; unHi--;
 					continue;
-				}
+				};
 				if (n < 0) break;
 				unHi--;
 			}
@@ -231,19 +227,17 @@ void fallbackQSort3(uint32_t* fmap,
 #define UNALIGNED_BH(zz)  ((zz) & 0x01f)
 
 static
-void fallbackSort(EState* state)
+void fallbackSort(uint32_t* fmap,
+		uint32_t* eclass,
+		uint32_t* bhtab,
+		int32_t   nblock)
 {
 	int32_t ftab[257];
 	int32_t ftabCopy[256];
 	int32_t H, i, j, k, l, r, cc, cc1;
 	int32_t nNotDone;
 	int32_t nBhtab;
-	/* params */
-	uint32_t *const fmap    = state->arr1;
-	uint32_t *const eclass  = state->arr2;
-#define eclass8 ((uint8_t*)eclass)
-	uint32_t *const bhtab   = state->ftab;
-	const int32_t   nblock  = state->nblock;
+	uint8_t* eclass8 = (uint8_t*)eclass;
 
 	/*
 	 * Initial 1-char radix sort to generate
@@ -332,7 +326,7 @@ void fallbackSort(EState* state)
 					if (cc != cc1) {
 						SET_BH(i);
 						cc = cc1;
-					}
+					};
 				}
 			}
 		}
@@ -355,7 +349,6 @@ void fallbackSort(EState* state)
 		eclass8[fmap[i]] = (uint8_t)j;
 	}
 	AssertH(j < 256, 1005);
-#undef eclass8
 }
 
 #undef       SET_BH
@@ -374,17 +367,17 @@ void fallbackSort(EState* state)
 /*---------------------------------------------*/
 static
 NOINLINE
-int mainGtU(EState* state,
+int mainGtU(
 		uint32_t  i1,
-		uint32_t  i2)
+		uint32_t  i2,
+		uint8_t*  block,
+		uint16_t* quadrant,
+		uint32_t  nblock,
+		int32_t*  budget)
 {
 	int32_t  k;
 	uint8_t  c1, c2;
 	uint16_t s1, s2;
-
-	uint8_t  *const block    = state->block;
-	uint16_t *const quadrant = state->quadrant;
-	const int32_t   nblock   = state->nblock;
 
 /* Loop unrolling here is actually very useful
  * (generated code is much simpler),
@@ -392,7 +385,7 @@ int mainGtU(EState* state,
  * but speeds up compression 10% overall
  */
 
-#if BZIP2_SPEED >= 1
+#if CONFIG_BZIP2_FAST >= 1
 
 #define TIMES_8(code) \
 	code; code; code; code; \
@@ -442,7 +435,7 @@ int mainGtU(EState* state,
 		if (i1 >= nblock) i1 -= nblock;
 		if (i2 >= nblock) i2 -= nblock;
 
-		state->budget--;
+		(*budget)--;
 		k -= 8;
 	} while (k >= 0);
 
@@ -459,45 +452,42 @@ int mainGtU(EState* state,
  * usually small, typically <= 20.
  */
 static
-const uint32_t incs[14] = {
+const int32_t incs[14] = {
 	1, 4, 13, 40, 121, 364, 1093, 3280,
 	9841, 29524, 88573, 265720,
 	797161, 2391484
 };
 
 static
-void mainSimpleSort(EState* state,
+void mainSimpleSort(uint32_t* ptr,
+		uint8_t*  block,
+		uint16_t* quadrant,
+		int32_t   nblock,
 		int32_t   lo,
 		int32_t   hi,
-		int32_t   d)
+		int32_t   d,
+		int32_t*  budget)
 {
-	uint32_t *const ptr = state->ptr;
+	int32_t i, j, h, bigN, hp;
+	uint32_t v;
 
-	/* At which increment to start? */
-	int hp = 0;
-	{
-		int bigN = hi - lo;
-		if (bigN <= 0)
-			return;
-		while (incs[hp] <= bigN)
-			hp++;
-		hp--;
-	}
+	bigN = hi - lo + 1;
+	if (bigN < 2) return;
+
+	hp = 0;
+	while (incs[hp] < bigN) hp++;
+	hp--;
 
 	for (; hp >= 0; hp--) {
-		int32_t i;
-		unsigned h;
-
 		h = incs[hp];
+
 		i = lo + h;
 		while (1) {
-			unsigned j;
-			unsigned v;
-
+			/*-- copy 1 --*/
 			if (i > hi) break;
 			v = ptr[i];
 			j = i;
-			while (mainGtU(state, ptr[j-h]+d, v+d)) {
+			while (mainGtU(ptr[j-h]+d, v+d, block, quadrant, nblock, budget)) {
 				ptr[j] = ptr[j-h];
 				j = j - h;
 				if (j <= (lo + h - 1)) break;
@@ -506,23 +496,24 @@ void mainSimpleSort(EState* state,
 			i++;
 
 /* 1.5% overall speedup, +290 bytes */
-#if BZIP2_SPEED >= 3
+#if CONFIG_BZIP2_FAST >= 3
 			/*-- copy 2 --*/
 			if (i > hi) break;
 			v = ptr[i];
 			j = i;
-			while (mainGtU(state, ptr[j-h]+d, v+d)) {
+			while (mainGtU(ptr[j-h]+d, v+d, block, quadrant, nblock, budget)) {
 				ptr[j] = ptr[j-h];
 				j = j - h;
 				if (j <= (lo + h - 1)) break;
 			}
 			ptr[j] = v;
 			i++;
+
 			/*-- copy 3 --*/
 			if (i > hi) break;
 			v = ptr[i];
 			j = i;
-			while (mainGtU(state, ptr[j-h]+d, v+d)) {
+			while (mainGtU(ptr[j-h]+d, v+d, block, quadrant, nblock, budget)) {
 				ptr[j] = ptr[j-h];
 				j = j - h;
 				if (j <= (lo + h - 1)) break;
@@ -530,7 +521,7 @@ void mainSimpleSort(EState* state,
 			ptr[j] = v;
 			i++;
 #endif
-			if (state->budget < 0) return;
+			if (*budget < 0) return;
 		}
 	}
 }
@@ -554,7 +545,7 @@ uint8_t mmed3(uint8_t a, uint8_t b, uint8_t c)
 		t = a;
 		a = b;
 		b = t;
-	}
+	};
 	/* here b >= a */
 	if (b > c) {
 		b = c;
@@ -595,12 +586,15 @@ uint8_t mmed3(uint8_t a, uint8_t b, uint8_t c)
 #define MAIN_QSORT_STACK_SIZE   100
 
 static NOINLINE
-void mainQSort3(EState* state,
+void mainQSort3(uint32_t* ptr,
+		uint8_t*  block,
+		uint16_t* quadrant,
+		int32_t   nblock,
 		int32_t   loSt,
-		int32_t   hiSt
-		/*int32_t dSt*/)
+		int32_t   hiSt,
+		int32_t   dSt,
+		int32_t*  budget)
 {
-	enum { dSt = BZ_N_RADIX };
 	int32_t unLo, unHi, ltLo, gtHi, n, m, med;
 	int32_t sp, lo, hi, d;
 
@@ -612,9 +606,6 @@ void mainQSort3(EState* state,
 	int32_t nextHi[3];
 	int32_t nextD [3];
 
-	uint32_t *const ptr   = state->ptr;
-	uint8_t  *const block = state->block;
-
 	sp = 0;
 	mpush(loSt, hiSt, dSt);
 
@@ -625,8 +616,8 @@ void mainQSort3(EState* state,
 		if (hi - lo < MAIN_QSORT_SMALL_THRESH
 		 || d > MAIN_QSORT_DEPTH_THRESH
 		) {
-			mainSimpleSort(state, lo, hi, d);
-			if (state->budget < 0)
+			mainSimpleSort(ptr, block, quadrant, nblock, lo, hi, d, budget);
+			if (*budget < 0)
 				return;
 			continue;
 		}
@@ -647,8 +638,8 @@ void mainQSort3(EState* state,
 					ltLo++;
 					unLo++;
 					continue;
-				}
-				if (n > 0) break;
+				};
+				if (n >  0) break;
 				unLo++;
 			}
 			while (1) {
@@ -660,8 +651,8 @@ void mainQSort3(EState* state,
 					gtHi--;
 					unHi--;
 					continue;
-				}
-				if (n < 0) break;
+				};
+				if (n <  0) break;
 				unHi--;
 			}
 			if (unLo > unHi)
@@ -730,23 +721,27 @@ void mainQSort3(EState* state,
 #define CLEARMASK (~(SETMASK))
 
 static NOINLINE
-void mainSort(EState* state)
+void mainSort(EState* state,
+		uint32_t* ptr,
+		uint8_t*  block,
+		uint16_t* quadrant,
+		uint32_t* ftab,
+		int32_t   nblock,
+		int32_t*  budget)
 {
-	int32_t  i, j;
+	int32_t  i, j, k, ss, sb;
+	uint8_t  c1;
+	int32_t  numQSorted;
+	uint16_t s;
 	Bool     bigDone[256];
-	uint8_t  runningOrder[256];
 	/* bbox: moved to EState to save stack
+	int32_t  runningOrder[256];
 	int32_t  copyStart[256];
 	int32_t  copyEnd  [256];
 	*/
+#define runningOrder (state->mainSort__runningOrder)
 #define copyStart    (state->mainSort__copyStart)
 #define copyEnd      (state->mainSort__copyEnd)
-
-	uint32_t *const ptr      = state->ptr;
-	uint8_t  *const block    = state->block;
-	uint32_t *const ftab     = state->ftab;
-	const int32_t   nblock   = state->nblock;
-	uint16_t *const quadrant = state->quadrant;
 
 	/*-- set up the 2-byte frequency table --*/
 	/* was: for (i = 65536; i >= 0; i--) ftab[i] = 0; */
@@ -755,25 +750,25 @@ void mainSort(EState* state)
 	j = block[0] << 8;
 	i = nblock - 1;
 /* 3%, +300 bytes */
-#if BZIP2_SPEED >= 2
+#if CONFIG_BZIP2_FAST >= 2
 	for (; i >= 3; i -= 4) {
 		quadrant[i] = 0;
-		j = (j >> 8) | (((unsigned)block[i]) << 8);
+		j = (j >> 8) | (((uint16_t)block[i]) << 8);
 		ftab[j]++;
 		quadrant[i-1] = 0;
-		j = (j >> 8) | (((unsigned)block[i-1]) << 8);
+		j = (j >> 8) | (((uint16_t)block[i-1]) << 8);
 		ftab[j]++;
 		quadrant[i-2] = 0;
-		j = (j >> 8) | (((unsigned)block[i-2]) << 8);
+		j = (j >> 8) | (((uint16_t)block[i-2]) << 8);
 		ftab[j]++;
 		quadrant[i-3] = 0;
-		j = (j >> 8) | (((unsigned)block[i-3]) << 8);
+		j = (j >> 8) | (((uint16_t)block[i-3]) << 8);
 		ftab[j]++;
 	}
 #endif
 	for (; i >= 0; i--) {
 		quadrant[i] = 0;
-		j = (j >> 8) | (((unsigned)block[i]) << 8);
+		j = (j >> 8) | (((uint16_t)block[i]) << 8);
 		ftab[j]++;
 	}
 
@@ -790,36 +785,33 @@ void mainSort(EState* state)
 		ftab[i] = j;
 	}
 
-	{
-		unsigned s;
-		s = block[0] << 8;
-		i = nblock - 1;
-#if BZIP2_SPEED >= 2
-		for (; i >= 3; i -= 4) {
-			s = (s >> 8) | (block[i] << 8);
-			j = ftab[s] - 1;
-			ftab[s] = j;
-			ptr[j] = i;
-			s = (s >> 8) | (block[i-1] << 8);
-			j = ftab[s] - 1;
-			ftab[s] = j;
-			ptr[j] = i-1;
-			s = (s >> 8) | (block[i-2] << 8);
-			j = ftab[s] - 1;
-			ftab[s] = j;
-			ptr[j] = i-2;
-			s = (s >> 8) | (block[i-3] << 8);
-			j = ftab[s] - 1;
-			ftab[s] = j;
-			ptr[j] = i-3;
-		}
+	s = block[0] << 8;
+	i = nblock - 1;
+#if CONFIG_BZIP2_FAST >= 2
+	for (; i >= 3; i -= 4) {
+		s = (s >> 8) | (block[i] << 8);
+		j = ftab[s] - 1;
+		ftab[s] = j;
+		ptr[j] = i;
+		s = (s >> 8) | (block[i-1] << 8);
+		j = ftab[s] - 1;
+		ftab[s] = j;
+		ptr[j] = i-1;
+		s = (s >> 8) | (block[i-2] << 8);
+		j = ftab[s] - 1;
+		ftab[s] = j;
+		ptr[j] = i-2;
+		s = (s >> 8) | (block[i-3] << 8);
+		j = ftab[s] - 1;
+		ftab[s] = j;
+		ptr[j] = i-3;
+	}
 #endif
-		for (; i >= 0; i--) {
-			s = (s >> 8) | (block[i] << 8);
-			j = ftab[s] - 1;
-			ftab[s] = j;
-			ptr[j] = i;
-		}
+	for (; i >= 0; i--) {
+		s = (s >> 8) | (block[i] << 8);
+		j = ftab[s] - 1;
+		ftab[s] = j;
+		ptr[j] = i;
 	}
 
 	/*
@@ -833,23 +825,24 @@ void mainSort(EState* state)
 	}
 
 	{
+		int32_t vv;
 		/* bbox: was: int32_t h = 1; */
 		/* do h = 3 * h + 1; while (h <= 256); */
-		unsigned h = 364;
+		uint32_t h = 364;
 
 		do {
 			/*h = h / 3;*/
 			h = (h * 171) >> 9; /* bbox: fast h/3 */
 			for (i = h; i <= 255; i++) {
-				unsigned vv, jh;
-				vv = runningOrder[i]; /* uint8[] */
+				vv = runningOrder[i];
 				j = i;
-				while (jh = j - h, BIGFREQ(runningOrder[jh]) > BIGFREQ(vv)) {
-					runningOrder[j] = runningOrder[jh];
-					j = jh;
-					if (j < h)
-						break;
+				while (BIGFREQ(runningOrder[j-h]) > BIGFREQ(vv)) {
+					runningOrder[j] = runningOrder[j-h];
+					j = j - h;
+					if (j <= (h - 1))
+						goto zero;
 				}
+ zero:
 				runningOrder[j] = vv;
 			}
 		} while (h != 1);
@@ -859,8 +852,9 @@ void mainSort(EState* state)
 	 * The main sorting loop.
 	 */
 
-	for (i = 0; /*i <= 255*/; i++) {
-		unsigned ss;
+	numQSorted = 0;
+
+	for (i = 0; i <= 255; i++) {
 
 		/*
 		 * Process big buckets, starting with the least full.
@@ -880,14 +874,17 @@ void mainSort(EState* state)
 		 */
 		for (j = 0; j <= 255; j++) {
 			if (j != ss) {
-				unsigned sb;
 				sb = (ss << 8) + j;
 				if (!(ftab[sb] & SETMASK)) {
-					int32_t lo =  ftab[sb] /*& CLEARMASK (redundant)*/;
+					int32_t lo =  ftab[sb]   & CLEARMASK;
 					int32_t hi = (ftab[sb+1] & CLEARMASK) - 1;
 					if (hi > lo) {
-						mainQSort3(state, lo, hi /*,BZ_N_RADIX*/);
-						if (state->budget < 0) return;
+						mainQSort3(
+							ptr, block, quadrant, nblock,
+							lo, hi, BZ_N_RADIX, budget
+						);
+						if (*budget < 0) return;
+						numQSorted += (hi - lo + 1);
 					}
 				}
 				ftab[sb] |= SETMASK;
@@ -909,8 +906,6 @@ void mainSort(EState* state)
 				copyEnd  [j] = (ftab[(j << 8) + ss + 1] & CLEARMASK) - 1;
 			}
 			for (j = ftab[ss << 8] & CLEARMASK; j < copyStart[ss]; j++) {
-				unsigned c1;
-				int32_t k;
 				k = ptr[j] - 1;
 				if (k < 0)
 					k += nblock;
@@ -919,8 +914,6 @@ void mainSort(EState* state)
 					ptr[copyStart[c1]++] = k;
 			}
 			for (j = (ftab[(ss+1) << 8] & CLEARMASK) - 1; j > copyEnd[ss]; j--) {
-				unsigned c1;
-				int32_t k;
 				k = ptr[j]-1;
 				if (k < 0)
 					k += nblock;
@@ -939,9 +932,6 @@ void mainSort(EState* state)
 
 		for (j = 0; j <= 255; j++)
 			ftab[(j << 8) + ss] |= SETMASK;
-
-		if (i == 255)
-			break;
 
 		/*
 		 * Step 3:
@@ -984,15 +974,15 @@ void mainSort(EState* state)
 		 */
 		bigDone[ss] = True;
 
-		{
-			unsigned bbStart = ftab[ss << 8] & CLEARMASK;
-			unsigned bbSize  = (ftab[(ss+1) << 8] & CLEARMASK) - bbStart;
-			unsigned shifts  = 0;
+		if (i < 255) {
+			int32_t bbStart = ftab[ss << 8] & CLEARMASK;
+			int32_t bbSize  = (ftab[(ss+1) << 8] & CLEARMASK) - bbStart;
+			int32_t shifts  = 0;
 
 			while ((bbSize >> shifts) > 65534) shifts++;
 
 			for (j = bbSize-1; j >= 0; j--) {
-				unsigned a2update  = ptr[bbStart + j]; /* uint32[] */
+				int32_t a2update   = ptr[bbStart + j];
 				uint16_t qVal      = (uint16_t)(j >> shifts);
 				quadrant[a2update] = qVal;
 				if (a2update < BZ_N_OVERSHOOT)
@@ -1025,24 +1015,31 @@ void mainSort(EState* state)
  *	arr1[0 .. nblock-1] holds sorted order
  */
 static NOINLINE
-int32_t BZ2_blockSort(EState* state)
+void BZ2_blockSort(EState* s)
 {
 	/* In original bzip2 1.0.4, it's a parameter, but 30
 	 * (which was the default) should work ok. */
 	enum { wfact = 30 };
-	unsigned i;
-	int32_t origPtr = origPtr;
 
-	if (state->nblock >= 10000) {
+	uint32_t* ptr    = s->ptr;
+	uint8_t*  block  = s->block;
+	uint32_t* ftab   = s->ftab;
+	int32_t   nblock = s->nblock;
+	uint16_t* quadrant;
+	int32_t   budget;
+	int32_t   i;
+
+	if (nblock < 10000) {
+		fallbackSort(s->arr1, s->arr2, ftab, nblock);
+	} else {
 		/* Calculate the location for quadrant, remembering to get
 		 * the alignment right.  Assumes that &(block[0]) is at least
 		 * 2-byte aligned -- this should be ok since block is really
 		 * the first section of arr2.
 		 */
-		i = state->nblock + BZ_N_OVERSHOOT;
-		if (i & 1)
-			i++;
-		state->quadrant = (uint16_t*) &(state->block[i]);
+		i = nblock + BZ_N_OVERSHOOT;
+		if (i & 1) i++;
+		quadrant = (uint16_t*)(&(block[i]));
 
 		/* (wfact-1) / 3 puts the default-factor-30
 		 * transition point at very roughly the same place as
@@ -1051,26 +1048,22 @@ int32_t BZ2_blockSort(EState* state)
 		 * resulting compressed stream is now the same regardless
 		 * of whether or not we use the main sort or fallback sort.
 		 */
-		state->budget = state->nblock * ((wfact-1) / 3);
-		mainSort(state);
-		if (state->budget >= 0)
-			goto good;
-	}
-	fallbackSort(state);
- good:
+		budget = nblock * ((wfact-1) / 3);
 
-#if BZ_LIGHT_DEBUG
-	origPtr = -1;
-#endif
-	for (i = 0; i < state->nblock; i++) {
-		if (state->ptr[i] == 0) {
-			origPtr = i;
-			break;
+		mainSort(s, ptr, block, quadrant, ftab, nblock, &budget);
+		if (budget < 0) {
+			fallbackSort(s->arr1, s->arr2, ftab, nblock);
 		}
 	}
 
-	AssertH(origPtr != -1, 1003);
-	return origPtr;
+	s->origPtr = -1;
+	for (i = 0; i < s->nblock; i++)
+		if (ptr[i] == 0) {
+			s->origPtr = i;
+			break;
+		};
+
+	AssertH(s->origPtr != -1, 1003);
 }
 
 

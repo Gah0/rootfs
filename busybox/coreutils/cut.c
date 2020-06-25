@@ -8,16 +8,6 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
-//config:config CUT
-//config:	bool "cut (5.8 kb)"
-//config:	default y
-//config:	help
-//config:	cut is used to print selected parts of lines from
-//config:	each file to stdout.
-
-//applet:IF_CUT(APPLET_NOEXEC(cut, cut, BB_DIR_USR_BIN, BB_SUID_DROP, cut))
-
-//kbuild:lib-$(CONFIG_CUT) += cut.o
 
 //usage:#define cut_trivial_usage
 //usage:       "[OPTIONS] [FILE]..."
@@ -42,7 +32,7 @@
 
 
 /* option vars */
-#define OPT_STR "b:c:f:d:sn"
+static const char optstring[] ALIGN1 = "b:c:f:d:sn";
 #define CUT_OPT_BYTE_FLGS     (1 << 0)
 #define CUT_OPT_CHAR_FLGS     (1 << 1)
 #define CUT_OPT_FIELDS_FLGS   (1 << 2)
@@ -201,19 +191,16 @@ int cut_main(int argc UNUSED_PARAM, char **argv)
 	char *sopt, *ltok;
 	unsigned opt;
 
-	opt = getopt32(argv, "^"
-			OPT_STR
-			"\0" "b--bcf:c--bcf:f--bcf",
-			&sopt, &sopt, &sopt, &ltok
-	);
+	opt_complementary = "b--bcf:c--bcf:f--bcf";
+	opt = getopt32(argv, optstring, &sopt, &sopt, &sopt, &ltok);
 //	argc -= optind;
 	argv += optind;
 	if (!(opt & (CUT_OPT_BYTE_FLGS | CUT_OPT_CHAR_FLGS | CUT_OPT_FIELDS_FLGS)))
-		bb_simple_error_msg_and_die("expected a list of bytes, characters, or fields");
+		bb_error_msg_and_die("expected a list of bytes, characters, or fields");
 
 	if (opt & CUT_OPT_DELIM_FLGS) {
 		if (ltok[0] && ltok[1]) { /* more than 1 char? */
-			bb_simple_error_msg_and_die("the delimiter must be a single character");
+			bb_error_msg_and_die("the delimiter must be a single character");
 		}
 		delim = ltok[0];
 	}
@@ -288,7 +275,7 @@ int cut_main(int argc UNUSED_PARAM, char **argv)
 
 		/* make sure we got some cut positions out of all that */
 		if (nlists == 0)
-			bb_simple_error_msg_and_die("missing list of positions");
+			bb_error_msg_and_die("missing list of positions");
 
 		/* now that the lists are parsed, we need to sort them to make life
 		 * easier on us when it comes time to print the chars / fields / lines

@@ -1,6 +1,6 @@
 #
 # For a description of the syntax of this configuration file,
-# see docs/Kconfig-language.txt.
+# see scripts/kbuild/config-language.txt.
 #
 
 menu "Finding Utilities"

@@ -9,39 +9,36 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 //config:config NAMEIF
-//config:	bool "nameif (6.6 kb)"
+//config:	bool "nameif"
 //config:	default y
 //config:	select PLATFORM_LINUX
 //config:	select FEATURE_SYSLOG
 //config:	help
-//config:	nameif is used to rename network interface by its MAC address.
-//config:	Renamed interfaces MUST be in the down state.
-//config:	It is possible to use a file (default: /etc/mactab)
-//config:	with list of new interface names and MACs.
-//config:	Maximum interface name length: IFNAMSIZ = 16
-//config:	File fields are separated by space or tab.
-//config:	File format:
-//config:		# Comment
-//config:		new_interface_name  XX:XX:XX:XX:XX:XX
+//config:	  nameif is used to rename network interface by its MAC address.
+//config:	  Renamed interfaces MUST be in the down state.
+//config:	  It is possible to use a file (default: /etc/mactab)
+//config:	  with list of new interface names and MACs.
+//config:	  Maximum interface name length: IFNAMSIZ = 16
+//config:	  File fields are separated by space or tab.
+//config:	  File format:
+//config:	  # Comment
+//config:	  new_interface_name    XX:XX:XX:XX:XX:XX
 //config:
 //config:config FEATURE_NAMEIF_EXTENDED
 //config:	bool "Extended nameif"
 //config:	default y
 //config:	depends on NAMEIF
 //config:	help
-//config:	This extends the nameif syntax to support the bus_info, driver,
-//config:	phyaddr selectors. The syntax is compatible to the normal nameif.
-//config:	File format:
-//config:		new_interface_name  driver=asix bus=usb-0000:00:08.2-3
-//config:		new_interface_name  bus=usb-0000:00:08.2-3 00:80:C8:38:91:B5
-//config:		new_interface_name  phy_address=2 00:80:C8:38:91:B5
-//config:		new_interface_name  mac=00:80:C8:38:91:B5
-//config:		new_interface_name  00:80:C8:38:91:B5
-
-//applet:IF_NAMEIF(APPLET_NOEXEC(nameif, nameif, BB_DIR_SBIN, BB_SUID_DROP, nameif))
-
-//kbuild:lib-$(CONFIG_NAMEIF) += nameif.o
+//config:	  This extends the nameif syntax to support the bus_info, driver,
+//config:	  phyaddr selectors. The syntax is compatible to the normal nameif.
+//config:	  File format:
+//config:	    new_interface_name  driver=asix bus=usb-0000:00:08.2-3
+//config:	    new_interface_name  bus=usb-0000:00:08.2-3 00:80:C8:38:91:B5
+//config:	    new_interface_name  phy_address=2 00:80:C8:38:91:B5
+//config:	    new_interface_name  mac=00:80:C8:38:91:B5
+//config:	    new_interface_name  00:80:C8:38:91:B5
 
 //usage:#define nameif_trivial_usage
 //usage:	IF_NOT_FEATURE_NAMEIF_EXTENDED(
@@ -164,19 +161,19 @@ static void nameif_parse_selector(ethtable_t *ch, char *selector)
 		if (*next)
 			*next++ = '\0';
 		/* Check for selectors, mac= is assumed */
-		if (is_prefixed_with(selector, "bus=")) {
+		if (strncmp(selector, "bus=", 4) == 0) {
 			ch->bus_info = xstrdup(selector + 4);
 			found_selector++;
-		} else if (is_prefixed_with(selector, "driver=")) {
+		} else if (strncmp(selector, "driver=", 7) == 0) {
 			ch->driver = xstrdup(selector + 7);
 			found_selector++;
-		} else if (is_prefixed_with(selector, "phyaddr=")) {
+		} else if (strncmp(selector, "phyaddr=", 8) == 0) {
 			ch->phy_address = xatoi_positive(selector + 8);
 			found_selector++;
 		} else {
 #endif
 			lmac = xmalloc(ETH_ALEN);
-			ch->mac = ether_aton_r(selector + (is_prefixed_with(selector, "mac=") ? 4 : 0), lmac);
+			ch->mac = ether_aton_r(selector + (strncmp(selector, "mac=", 4) != 0 ? 0 : 4), lmac);
 			if (ch->mac == NULL)
 				bb_error_msg_and_die("can't parse %s", selector);
 #if  ENABLE_FEATURE_NAMEIF_EXTENDED

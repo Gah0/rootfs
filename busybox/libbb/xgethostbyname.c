@@ -12,6 +12,6 @@ struct hostent* FAST_FUNC xgethostbyname(const char *name)
 {
 	struct hostent *retval = gethostbyname(name);
 	if (!retval)
-		bb_simple_herror_msg_and_die(name);
+		bb_herror_msg_and_die("%s", name);
 	return retval;
 }

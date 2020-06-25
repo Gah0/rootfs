@@ -6,6 +6,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 /* Conversion table.  for base 64 */
@@ -213,7 +214,7 @@ void FAST_FUNC read_base64(FILE *src_stream, FILE *dst_stream, int flags)
 			if (*in_tail == '\0')
 				return;
 			/* No */
-			bb_simple_error_msg_and_die("truncated base64 input");
+			bb_error_msg_and_die("truncated base64 input");
 		}
 
 		/* It was partial decode */

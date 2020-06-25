@@ -6,11 +6,12 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
+
 //config:config IOSTAT
-//config:	bool "iostat (7.6 kb)"
+//config:	bool "iostat"
 //config:	default y
 //config:	help
-//config:	Report CPU and I/O statistics
+//config:	  Report CPU and I/O statistics
 
 //applet:IF_IOSTAT(APPLET(iostat, BB_DIR_BIN, BB_SUID_DROP))
 
@@ -141,7 +142,7 @@ static void print_timestamp(void)
 	/* %x: date representation for the current locale */
 	/* %X: time representation for the current locale */
 	strftime(buf, sizeof(buf), "%x %X", &G.tmtime);
-	puts(buf);
+	printf("%s\n", buf);
 }
 
 static cputime_t get_smp_uptime(void)
@@ -417,7 +418,8 @@ int iostat_main(int argc UNUSED_PARAM, char **argv)
 
 	/* Parse and process arguments */
 	/* -k and -m are mutually exclusive */
-	opt = getopt32(argv, "^" "cdtzkm" "\0" "k--m:m--k");
+	opt_complementary = "k--m:m--k";
+	opt = getopt32(argv, "cdtzkm");
 	if (!(opt & (OPT_c + OPT_d)))
 		/* Default is -cd */
 		opt |= OPT_c + OPT_d;

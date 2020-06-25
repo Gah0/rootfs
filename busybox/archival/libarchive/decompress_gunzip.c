@@ -32,6 +32,8 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
+#include <setjmp.h>
 #include "libbb.h"
 #include "bb_archive.h"
 
@@ -39,8 +41,7 @@ typedef struct huft_t {
 	unsigned char e;	/* number of extra bits or operation */
 	unsigned char b;	/* number of bits in this code or subcode */
 	union {
-		unsigned n;	/* literal, length base, or distance base */
-		/* ^^^^^ was "unsigned short", but that results in larger code */
+		unsigned short n;	/* literal, length base, or distance base */
 		struct huft_t *t;	/* pointer to next level of table */
 	} v;
 } huft_t;
@@ -185,26 +186,29 @@ static const uint16_t mask_bits[] ALIGN2 = {
 	0x01ff, 0x03ff, 0x07ff, 0x0fff, 0x1fff, 0x3fff, 0x7fff, 0xffff
 };
 
-/* Put lengths/offsets and extra bits in a struct of arrays
- * to make calls to huft_build() have one fewer parameter.
- */
-struct cp_ext {
-	uint16_t cp[31];
-	uint8_t ext[31];
+/* Copy lengths for literal codes 257..285 */
+static const uint16_t cplens[] ALIGN2 = {
+	3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59,
+	67, 83, 99, 115, 131, 163, 195, 227, 258, 0, 0
 };
-/* Copy lengths and extra bits for literal codes 257..285 */
+
 /* note: see note #13 above about the 258 in this list. */
-static const struct cp_ext lit = {
-	/*257 258 259 260 261 262 263 264 265 266 267 268 269 270 271  272  273  274  275  276   277   278   279   280   281   282   283    284    285 */
-	/*0   1   2   3   4   5   6   7   8   9   10  11  12  13   14   15   16   17   18   19    20    21    22    23    24    25    26     27     28     29  30 */
-	{ 3,  4,  5,  6,  7,  8,  9,  10, 11, 13, 15, 17, 19, 23,  27,  31,  35,  43,  51,  59,   67,   83,   99,  115,  131,  163,  195,   227,   258,     0, 0  },
-	{ 0,  0,  0,  0,  0,  0,  0,   0,  1,  1,  1,  1,  2,  2,   2,   2,   3,   3,   3,   3,    4,    4,    4,    4,    5,    5,    5,     5,     0,    99, 99 } /* 99 == invalid */
+/* Extra bits for literal codes 257..285 */
+static const uint8_t cplext[] ALIGN1 = {
+	0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5,
+	5, 5, 5, 0, 99, 99
+}; /* 99 == invalid */
+
+/* Copy offsets for distance codes 0..29 */
+static const uint16_t cpdist[] ALIGN2 = {
+	1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513,
+	769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577
 };
-/* Copy offsets and extra bits for distance codes 0..29 */
-static const struct cp_ext dist = {
-	/*0   1   2   3   4   5   6   7   8   9   10  11  12  13   14   15   16   17   18   19    20    21    22    23    24    25    26     27     28     29 */
-	{ 1,  2,  3,  4,  5,  7,  9,  13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073, 4097, 6145, 8193, 12289, 16385, 24577 },
-	{ 0,  0,  0,  0,  1,  1,  2,   2,  3,  3,  4,  4,  5,  5,   6,   6,   7,   7,   8,   8,    9,    9,   10,   10,   11,   11,   12,    12,    13,    13 }
+
+/* Extra bits for distance codes */
+static const uint8_t cpdext[] ALIGN1 = {
+	0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10,
+	11, 11, 12, 12, 13, 13
 };
 
 /* Tables for deflate from PKZIP's appnote.txt. */
@@ -275,25 +279,22 @@ static unsigned fill_bitbuffer(STATE_PARAM unsigned bitbuffer, unsigned *current
 
 
 /* Given a list of code lengths and a maximum table size, make a set of
- * tables to decode that set of codes.
+ * tables to decode that set of codes.  Return zero on success, one if
+ * the given code set is incomplete (the tables are still built in this
+ * case), two if the input is invalid (all zero length codes or an
+ * oversubscribed set of lengths) - in this case stores NULL in *t.
  *
  * b:	code lengths in bits (all assumed <= BMAX)
  * n:	number of codes (assumed <= N_MAX)
  * s:	number of simple-valued codes (0..s-1)
- * cp_ext->cp,ext: list of base values/extra bits for non-simple codes
+ * d:	list of base values for non-simple codes
+ * e:	list of extra bits for non-simple codes
+ * t:	result: starting table
  * m:	maximum lookup bits, returns actual
- * result: starting table
- *
- * On error, returns a value with lowest-bit set on error.
- * It can be just the value of 0x1,
- * or a valid pointer to a Huffman table, ORed with 0x1 if incompete table
- * is given: "fixed inflate" decoder feeds us such data.
  */
-#define BAD_HUFT(p) ((uintptr_t)(p) & 1)
-#define ERR_RET     ((huft_t*)(uintptr_t)1)
-static huft_t* huft_build(const unsigned *b, const unsigned n,
-			const unsigned s, const struct cp_ext *cp_ext,
-			unsigned *m)
+static int huft_build(const unsigned *b, const unsigned n,
+			const unsigned s, const unsigned short *d,
+			const unsigned char *e, huft_t **t, unsigned *m)
 {
 	unsigned a;             /* counter for codes of length k */
 	unsigned c[BMAX + 1];   /* bit length count table */
@@ -304,40 +305,34 @@ static huft_t* huft_build(const unsigned *b, const unsigned n,
 	unsigned i;             /* counter, current code */
 	unsigned j;             /* counter */
 	int k;                  /* number of bits in current code */
-	const unsigned *p;      /* pointer into c[], b[], or v[] */
+	unsigned *p;            /* pointer into c[], b[], or v[] */
 	huft_t *q;              /* points to current table */
 	huft_t r;               /* table entry for structure assignment */
 	huft_t *u[BMAX];        /* table stack */
-	unsigned v[N_MAX + 1];  /* values in order of bit length. last v[] is never used */
+	unsigned v[N_MAX];      /* values in order of bit length */
 	int ws[BMAX + 1];       /* bits decoded stack */
 	int w;                  /* bits decoded */
 	unsigned x[BMAX + 1];   /* bit offsets, then code stack */
 	unsigned *xp;           /* pointer into x */
 	int y;                  /* number of dummy codes added */
 	unsigned z;             /* number of entries in current table */
-	huft_t *result;
-	huft_t **t;
 
 	/* Length of EOB code, if any */
 	eob_len = n > 256 ? b[256] : BMAX;
 
+	*t = NULL;
+
 	/* Generate counts for each bit length */
 	memset(c, 0, sizeof(c));
-	p = b;
+	p = (unsigned *) b; /* cast allows us to reuse p for pointing to b */
 	i = n;
 	do {
 		c[*p]++; /* assume all entries <= BMAX */
 		p++;     /* can't combine with above line (Solaris bug) */
 	} while (--i);
 	if (c[0] == n) {  /* null input - all zero length codes */
-		q = xzalloc(3 * sizeof(*q));
-		//q[0].v.t = NULL;
-		q[1].e = 99;    /* invalid code marker */
-		q[1].b = 1;
-		q[2].e = 99;    /* invalid code marker */
-		q[2].b = 1;
-		*m = 1;
-		return q + 1;
+		*m = 0;
+		return 2;
 	}
 
 	/* Find minimum and maximum length, bound *m by those */
@@ -353,11 +348,11 @@ static huft_t* huft_build(const unsigned *b, const unsigned n,
 	for (y = 1 << j; j < i; j++, y <<= 1) {
 		y -= c[j];
 		if (y < 0)
-			return ERR_RET; /* bad input: more codes than bits */
+			return 2; /* bad input: more codes than bits */
 	}
 	y -= c[i];
 	if (y < 0)
-		return ERR_RET;
+		return 2;
 	c[i] += y;
 
 	/* Generate starting offsets into the value table for each length */
@@ -369,12 +364,8 @@ static huft_t* huft_build(const unsigned *b, const unsigned n,
 		*xp++ = j;
 	}
 
-	/* Make a table of values in order of bit lengths.
-	 * To detect bad input, unused v[i]'s are set to invalid value UINT_MAX.
-	 * In particular, last v[i] is never filled and must not be accessed.
-	 */
-	memset(v, 0xff, sizeof(v));
-	p = b;
+	/* Make a table of values in order of bit lengths */
+	p = (unsigned *) b;
 	i = 0;
 	do {
 		j = *p++;
@@ -384,8 +375,6 @@ static huft_t* huft_build(const unsigned *b, const unsigned n,
 	} while (++i < n);
 
 	/* Generate the Huffman codes and for each, make the table entries */
-	result = ERR_RET;
-	t = &result;
 	x[0] = i = 0;   /* first Huffman code is zero */
 	p = v;          /* grab values in bit order */
 	htl = -1;       /* no tables yet--level -1 */
@@ -443,16 +432,14 @@ static huft_t* huft_build(const unsigned *b, const unsigned n,
 
 			/* set up table entry in r */
 			r.b = (unsigned char) (k - w);
-			if (/*p >= v + n || -- redundant, caught by the second check: */
-			    *p == UINT_MAX /* do we access uninited v[i]? (see memset(v))*/
-			) {
+			if (p >= v + n) {
 				r.e = 99; /* out of values--invalid code */
 			} else if (*p < s) {
 				r.e = (unsigned char) (*p < 256 ? 16 : 15);	/* 256 is EOB code */
 				r.v.n = (unsigned short) (*p++); /* simple code is just the value */
 			} else {
-				r.e = (unsigned char) cp_ext->ext[*p - s]; /* non-simple--look up in lists */
-				r.v.n = cp_ext->cp[*p++ - s];
+				r.e = (unsigned char) e[*p - s]; /* non-simple--look up in lists */
+				r.v.n = d[*p++ - s];
 			}
 
 			/* fill code-like entries with r */
@@ -477,11 +464,8 @@ static huft_t* huft_build(const unsigned *b, const unsigned n,
 	/* return actual size of base table */
 	*m = ws[1];
 
-	if (y != 0 && g != 1) /* we were given an incomplete table */
-		/* return "result" ORed with 1 */
-		return (void*)((uintptr_t)result | 1);
-
-	return result;
+	/* Return 1 if we were given an incomplete table */
+	return y != 0 && g != 1;
 }
 
 
@@ -533,9 +517,8 @@ static NOINLINE int inflate_codes(STATE_PARAM_ONLY)
 		e = t->e;
 		if (e > 16)
 			do {
-				if (e == 99) {
-					abort_unzip(PASS_STATE_ONLY);
-				}
+				if (e == 99)
+					abort_unzip(PASS_STATE_ONLY);;
 				bb >>= t->b;
 				k -= t->b;
 				e -= 16;
@@ -571,9 +554,8 @@ static NOINLINE int inflate_codes(STATE_PARAM_ONLY)
 			e = t->e;
 			if (e > 16)
 				do {
-					if (e == 99) {
+					if (e == 99)
 						abort_unzip(PASS_STATE_ONLY);
-					}
 					bb >>= t->b;
 					k -= t->b;
 					e -= 16;
@@ -782,17 +764,14 @@ static int inflate_block(STATE_PARAM smallint *e)
 		for (; i < 288; i++) /* make a complete, but wrong code set */
 			ll[i] = 8;
 		bl = 7;
-		inflate_codes_tl = huft_build(ll, 288, 257, &lit, &bl);
-		/* ^^^ never returns error here - we use known data */
+		huft_build(ll, 288, 257, cplens, cplext, &inflate_codes_tl, &bl);
+		/* huft_build() never return nonzero - we use known data */
 
 		/* set up distance table */
 		for (i = 0; i < 30; i++) /* make an incomplete code set */
 			ll[i] = 5;
 		bd = 5;
-		inflate_codes_td = huft_build(ll, 30, 0, &dist, &bd);
-		/* ^^^ does return error here! (lsb bit is set) - we gave it incomplete code set */
-		/* clearing error bit: */
-		inflate_codes_td = (void*)((uintptr_t)inflate_codes_td & ~(uintptr_t)1);
+		huft_build(ll, 30, 0, cpdist, cpdext, &inflate_codes_td, &bd);
 
 		/* set up data for inflate_codes() */
 		inflate_codes_setup(PASS_STATE bl, bd);
@@ -842,9 +821,8 @@ static int inflate_block(STATE_PARAM smallint *e)
 
 		b_dynamic >>= 4;
 		k_dynamic -= 4;
-		if (nl > 286 || nd > 30) {
+		if (nl > 286 || nd > 30)
 			abort_unzip(PASS_STATE_ONLY);	/* bad lengths */
-		}
 
 		/* read in bit-length-code lengths */
 		for (j = 0; j < nb; j++) {
@@ -858,9 +836,9 @@ static int inflate_block(STATE_PARAM smallint *e)
 
 		/* build decoding table for trees - single level, 7 bit lookup */
 		bl = 7;
-		inflate_codes_tl = huft_build(ll, 19, 19, NULL, &bl);
-		if (BAD_HUFT(inflate_codes_tl)) {
-			abort_unzip(PASS_STATE_ONLY);	/* incomplete code set */
+		i = huft_build(ll, 19, 19, NULL, NULL, &inflate_codes_tl, &bl);
+		if (i != 0) {
+			abort_unzip(PASS_STATE_ONLY); //return i;	/* incomplete code set */
 		}
 
 		/* read in literal and distance code lengths */
@@ -923,15 +901,14 @@ static int inflate_block(STATE_PARAM smallint *e)
 
 		/* build the decoding tables for literal/length and distance codes */
 		bl = lbits;
-		inflate_codes_tl = huft_build(ll, nl, 257, &lit, &bl);
-		if (BAD_HUFT(inflate_codes_tl)) {
+
+		i = huft_build(ll, nl, 257, cplens, cplext, &inflate_codes_tl, &bl);
+		if (i != 0)
 			abort_unzip(PASS_STATE_ONLY);
-		}
 		bd = dbits;
-		inflate_codes_td = huft_build(ll + nl, nd, 0, &dist, &bd);
-		if (BAD_HUFT(inflate_codes_td)) {
+		i = huft_build(ll + nl, nd, 0, cpdist, cpdext, &inflate_codes_td, &bd);
+		if (i != 0)
 			abort_unzip(PASS_STATE_ONLY);
-		}
 
 		/* set up data for inflate_codes() */
 		inflate_codes_setup(PASS_STATE bl, bd);
@@ -1013,13 +990,12 @@ inflate_unzip_internal(STATE_PARAM transformer_state_t *xstate)
 	gunzip_bb = 0;
 
 	/* Create the crc table */
-	gunzip_crc_table = crc32_new_table_le();
+	gunzip_crc_table = crc32_filltable(NULL, 0);
 	gunzip_crc = ~0;
 
 	error_msg = "corrupted data";
 	if (setjmp(error_jmp)) {
 		/* Error from deep inside zip machinery */
-		bb_simple_error_msg(error_msg);
 		n = -1;
 		goto ret;
 	}
@@ -1092,7 +1068,7 @@ static int top_up(STATE_PARAM unsigned n)
 		bytebuffer_offset = 0;
 		bytebuffer_size = full_read(gunzip_src_fd, &bytebuffer[count], bytebuffer_max - count);
 		if ((int)bytebuffer_size < 0) {
-			bb_simple_error_msg(bb_msg_read_error);
+			bb_error_msg(bb_msg_read_error);
 			return 0;
 		}
 		bytebuffer_size += count;
@@ -1142,8 +1118,9 @@ static int check_header_gzip(STATE_PARAM transformer_state_t *xstate)
 			uint8_t os_flags_UNUSED;
 		} PACKED formatted;
 	} header;
-
-	BUILD_BUG_ON(sizeof(header) != 8);
+	struct BUG_header {
+		char BUG_header[sizeof(header) == 8 ? 1 : -1];
+	};
 
 	/*
 	 * Rewind bytebuffer. We use the beginning because the header has 8
@@ -1213,16 +1190,16 @@ unpack_gz_stream(transformer_state_t *xstate)
 	if (check_signature16(xstate, GZIP_MAGIC))
 		return -1;
 #else
-	if (!xstate->signature_skipped) {
+	if (xstate->check_signature) {
 		uint16_t magic2;
 
 		if (full_read(xstate->src_fd, &magic2, 2) != 2) {
  bad_magic:
-			bb_simple_error_msg("invalid magic");
+			bb_error_msg("invalid magic");
 			return -1;
 		}
 		if (magic2 == COMPRESS_MAGIC) {
-			xstate->signature_skipped = 2;
+			xstate->check_signature = 0;
 			return unpack_Z_stream(xstate);
 		}
 		if (magic2 != GZIP_MAGIC)
@@ -1240,7 +1217,7 @@ unpack_gz_stream(transformer_state_t *xstate)
 
  again:
 	if (!check_header_gzip(PASS_STATE xstate)) {
-		bb_simple_error_msg("corrupted data");
+		bb_error_msg("corrupted data");
 		total = -1;
 		goto ret;
 	}
@@ -1253,7 +1230,7 @@ unpack_gz_stream(transformer_state_t *xstate)
 	total += n;
 
 	if (!top_up(PASS_STATE 8)) {
-		bb_simple_error_msg("corrupted data");
+		bb_error_msg("corrupted data");
 		total = -1;
 		goto ret;
 	}
@@ -1261,7 +1238,7 @@ unpack_gz_stream(transformer_state_t *xstate)
 	/* Validate decompression - crc */
 	v32 = buffer_read_le_u32(PASS_STATE_ONLY);
 	if ((~gunzip_crc) != v32) {
-		bb_simple_error_msg("crc error");
+		bb_error_msg("crc error");
 		total = -1;
 		goto ret;
 	}
@@ -1269,7 +1246,7 @@ unpack_gz_stream(transformer_state_t *xstate)
 	/* Validate decompression - size */
 	v32 = buffer_read_le_u32(PASS_STATE_ONLY);
 	if ((uint32_t)gunzip_bytes_out != v32) {
-		bb_simple_error_msg("incorrect length");
+		bb_error_msg("incorrect length");
 		total = -1;
 	}
 

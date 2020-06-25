@@ -12,41 +12,30 @@
  * Rani Assaf <rani@magic.metawire.com> 980929: resolve addresses
  * initially integrated into busybox by Bernhard Reutner-Fischer
  */
+
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <arpa/inet.h>
-
-/* from <linux/fib_rules.h>: */
-#define FRA_SUPPRESS_IFGROUP   13
-#define FRA_SUPPRESS_PREFIXLEN 14
 
 #include "ip_common.h"  /* #include "libbb.h" is inside */
 #include "rt_names.h"
 #include "utils.h"
 
-#include <linux/version.h>
-/* RTA_TABLE is not a define, can't test with ifdef. */
-/* As a proxy, test which kernels toolchain expects: */
-#define HAVE_RTA_TABLE (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,19))
+/*
+static void usage(void) __attribute__((noreturn));
 
-/* If you add stuff here, update iprule_full_usage */
-static const char keywords[] ALIGN1 =
-	"from\0""to\0""preference\0""order\0""priority\0"
-	"tos\0""fwmark\0""realms\0""table\0""lookup\0"
-	"suppress_prefixlength\0""suppress_ifgroup\0"
-	"dev\0""iif\0""nat\0""map-to\0""type\0""help\0"
-	;
-#define keyword_preference            (keywords           + sizeof("from") + sizeof("to"))
-#define keyword_fwmark                (keyword_preference + sizeof("preference") + sizeof("order") + sizeof("priority") + sizeof("tos"))
-#define keyword_realms                (keyword_fwmark     + sizeof("fwmark"))
-#define keyword_suppress_prefixlength (keyword_realms     + sizeof("realms") + sizeof("table") + sizeof("lookup"))
-#define keyword_suppress_ifgroup      (keyword_suppress_prefixlength + sizeof("suppress_prefixlength"))
-enum {
-	ARG_from = 1, ARG_to, ARG_preference, ARG_order, ARG_priority,
-	ARG_tos, ARG_fwmark, ARG_realms, ARG_table, ARG_lookup,
-	ARG_suppress_prefixlength, ARG_suppress_ifgroup,
-	ARG_dev, ARG_iif, ARG_nat, ARG_map_to, ARG_type, ARG_help,
-};
+static void usage(void)
+{
+	fprintf(stderr, "Usage: ip rule [ list | add | del ] SELECTOR ACTION\n");
+	fprintf(stderr, "SELECTOR := [ from PREFIX ] [ to PREFIX ] [ tos TOS ] [ fwmark FWMARK ]\n");
+	fprintf(stderr, "            [ dev STRING ] [ pref NUMBER ]\n");
+	fprintf(stderr, "ACTION := [ table TABLE_ID ] [ nat ADDRESS ]\n");
+	fprintf(stderr, "          [ prohibit | reject | unreachable ]\n");
+	fprintf(stderr, "          [ realms [SRCREALM/]DSTREALM ]\n");
+	fprintf(stderr, "TABLE_ID := [ local | main | default | NUMBER ]\n");
+	exit(-1);
+}
+*/
 
 static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 					struct nlmsghdr *n, void *arg UNUSED_PARAM)
@@ -55,6 +44,8 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 	int len = n->nlmsg_len;
 	int host_len = -1;
 	struct rtattr * tb[RTA_MAX+1];
+	char abuf[256];
+	SPRINT_BUF(b1);
 
 	if (n->nlmsg_type != RTM_NEWRULE)
 		return 0;
@@ -63,7 +54,7 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 	if (len < 0)
 		return -1;
 
-	//memset(tb, 0, sizeof(tb)); - parse_rtattr does this
+	memset(tb, 0, sizeof(tb));
 	parse_rtattr(tb, RTA_MAX, RTM_RTA(r), len);
 
 	if (r->rtm_family == AF_INET)
@@ -81,14 +72,16 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 	printf("from ");
 	if (tb[RTA_SRC]) {
 		if (r->rtm_src_len != host_len) {
-			printf("%s/%u",
-				rt_addr_n2a(r->rtm_family, RTA_DATA(tb[RTA_SRC])),
+			printf("%s/%u", rt_addr_n2a(r->rtm_family,
+							RTA_DATA(tb[RTA_SRC]),
+							abuf, sizeof(abuf)),
 				r->rtm_src_len
 			);
 		} else {
 			fputs(format_host(r->rtm_family,
 						RTA_PAYLOAD(tb[RTA_SRC]),
-						RTA_DATA(tb[RTA_SRC])),
+						RTA_DATA(tb[RTA_SRC]),
+						abuf, sizeof(abuf)),
 				stdout
 			);
 		}
@@ -102,20 +95,22 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 	if (tb[RTA_DST]) {
 		if (r->rtm_dst_len != host_len) {
 			printf("to %s/%u ", rt_addr_n2a(r->rtm_family,
-							 RTA_DATA(tb[RTA_DST])),
+							 RTA_DATA(tb[RTA_DST]),
+							 abuf, sizeof(abuf)),
 				r->rtm_dst_len
 				);
 		} else {
 			printf("to %s ", format_host(r->rtm_family,
 						       RTA_PAYLOAD(tb[RTA_DST]),
-						       RTA_DATA(tb[RTA_DST])));
+						       RTA_DATA(tb[RTA_DST]),
+						       abuf, sizeof(abuf)));
 		}
 	} else if (r->rtm_dst_len) {
 		printf("to 0/%d ", r->rtm_dst_len);
 	}
 
 	if (r->rtm_tos) {
-		printf("tos %s ", rtnl_dsfield_n2a(r->rtm_tos));
+		printf("tos %s ", rtnl_dsfield_n2a(r->rtm_tos, b1));
 	}
 	if (tb[RTA_PROTOINFO]) {
 		printf("fwmark %#x ", *(uint32_t*)RTA_DATA(tb[RTA_PROTOINFO]));
@@ -125,24 +120,8 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 		printf("iif %s ", (char*)RTA_DATA(tb[RTA_IIF]));
 	}
 
-#if HAVE_RTA_TABLE
-	if (tb[RTA_TABLE])
-		printf("lookup %s ", rtnl_rttable_n2a(*(uint32_t*)RTA_DATA(tb[RTA_TABLE])));
-	else
-#endif
 	if (r->rtm_table)
-		printf("lookup %s ", rtnl_rttable_n2a(r->rtm_table));
-
-	if (tb[FRA_SUPPRESS_PREFIXLEN]) {
-		int pl = *(uint32_t*)RTA_DATA(tb[FRA_SUPPRESS_PREFIXLEN]);
-		if (pl != -1)
-			printf("%s %d ", keyword_suppress_prefixlength, pl);
-	}
-	if (tb[FRA_SUPPRESS_IFGROUP]) {
-		int grp = *(uint32_t*)RTA_DATA(tb[FRA_SUPPRESS_IFGROUP]);
-		if (grp != -1)
-			printf("%s %d ", keyword_suppress_ifgroup, grp);
-	}
+		printf("lookup %s ", rtnl_rttable_n2a(r->rtm_table, b1));
 
 	if (tb[RTA_FLOW]) {
 		uint32_t to = *(uint32_t*)RTA_DATA(tb[RTA_FLOW]);
@@ -150,10 +129,10 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 		to &= 0xFFFF;
 		if (from) {
 			printf("realms %s/",
-				rtnl_rtrealm_n2a(from));
+				rtnl_rtrealm_n2a(from, b1));
 		}
 		printf("%s ",
-			rtnl_rtrealm_n2a(to));
+			rtnl_rtrealm_n2a(to, b1));
 	}
 
 	if (r->rtm_type == RTN_NAT) {
@@ -161,12 +140,12 @@ static int FAST_FUNC print_rule(const struct sockaddr_nl *who UNUSED_PARAM,
 			printf("map-to %s ",
 				format_host(r->rtm_family,
 					    RTA_PAYLOAD(tb[RTA_GATEWAY]),
-					    RTA_DATA(tb[RTA_GATEWAY]))
-			);
+					    RTA_DATA(tb[RTA_GATEWAY]),
+					    abuf, sizeof(abuf)));
 		} else
 			printf("masquerade");
 	} else if (r->rtm_type != RTN_UNICAST)
-		fputs(rtnl_rtntype_n2a(r->rtm_type), stdout);
+		fputs(rtnl_rtntype_n2a(r->rtm_type, b1), stdout);
 
 	bb_putchar('\n');
 	/*fflush_all();*/
@@ -199,6 +178,15 @@ static int iprule_list(char **argv)
 /* Return value becomes exitcode. It's okay to not return at all */
 static int iprule_modify(int cmd, char **argv)
 {
+	static const char keywords[] ALIGN1 =
+		"from\0""to\0""preference\0""order\0""priority\0"
+		"tos\0""fwmark\0""realms\0""table\0""lookup\0""dev\0"
+		"iif\0""nat\0""map-to\0""type\0""help\0";
+	enum {
+		ARG_from = 1, ARG_to, ARG_preference, ARG_order, ARG_priority,
+		ARG_tos, ARG_fwmark, ARG_realms, ARG_table, ARG_lookup, ARG_dev,
+		ARG_iif, ARG_nat, ARG_map_to, ARG_type, ARG_help
+	};
 	bool table_ok = 0;
 	struct rtnl_handle rth;
 	struct {
@@ -215,11 +203,9 @@ static int iprule_modify(int cmd, char **argv)
 	req.n.nlmsg_flags = NLM_F_REQUEST;
 	req.r.rtm_family = preferred_family;
 	req.r.rtm_protocol = RTPROT_BOOT;
-	if (RT_SCOPE_UNIVERSE != 0)
-		req.r.rtm_scope = RT_SCOPE_UNIVERSE;
-	/*req.r.rtm_table = 0; - already is */
-	if (RTN_UNSPEC != 0)
-		req.r.rtm_type = RTN_UNSPEC;
+	req.r.rtm_scope = RT_SCOPE_UNIVERSE;
+	req.r.rtm_table = 0;
+	req.r.rtm_type = RTN_UNSPEC;
 
 	if (cmd == RTM_NEWRULE) {
 		req.n.nlmsg_flags |= NLM_F_CREATE|NLM_F_EXCL;
@@ -229,7 +215,7 @@ static int iprule_modify(int cmd, char **argv)
 	while (*argv) {
 		key = index_in_substrings(keywords, *argv) + 1;
 		if (key == 0) /* no match found in keywords array, bail out. */
-			invarg_1_to_2(*argv, applet_name);
+			invarg(*argv, applet_name);
 		if (key == ARG_from) {
 			inet_prefix dst;
 			NEXT_ARG();
@@ -248,24 +234,24 @@ static int iprule_modify(int cmd, char **argv)
 		) {
 			uint32_t pref;
 			NEXT_ARG();
-			pref = get_u32(*argv, keyword_preference);
+			pref = get_u32(*argv, "preference");
 			addattr32(&req.n, sizeof(req), RTA_PRIORITY, pref);
 		} else if (key == ARG_tos) {
 			uint32_t tos;
 			NEXT_ARG();
 			if (rtnl_dsfield_a2n(&tos, *argv))
-				invarg_1_to_2(*argv, "TOS");
+				invarg(*argv, "TOS");
 			req.r.rtm_tos = tos;
 		} else if (key == ARG_fwmark) {
 			uint32_t fwmark;
 			NEXT_ARG();
-			fwmark = get_u32(*argv, keyword_fwmark);
+			fwmark = get_u32(*argv, "fwmark");
 			addattr32(&req.n, sizeof(req), RTA_PROTOINFO, fwmark);
 		} else if (key == ARG_realms) {
 			uint32_t realm;
 			NEXT_ARG();
 			if (get_rt_realms(&realm, *argv))
-				invarg_1_to_2(*argv, keyword_realms);
+				invarg(*argv, "realms");
 			addattr32(&req.n, sizeof(req), RTA_FLOW, realm);
 		} else if (key == ARG_table ||
 			   key == ARG_lookup
@@ -273,27 +259,9 @@ static int iprule_modify(int cmd, char **argv)
 			uint32_t tid;
 			NEXT_ARG();
 			if (rtnl_rttable_a2n(&tid, *argv))
-				invarg_1_to_2(*argv, "table ID");
-
-#if HAVE_RTA_TABLE
-			if (tid > 255) {
-				req.r.rtm_table = RT_TABLE_UNSPEC;
-				addattr32(&req.n, sizeof(req), RTA_TABLE, tid);
-			} else
-#endif
-				req.r.rtm_table = tid;
-
+				invarg(*argv, "table ID");
+			req.r.rtm_table = tid;
 			table_ok = 1;
-		} else if (key == ARG_suppress_prefixlength) {
-			int prefix_length;
-			NEXT_ARG();
-			prefix_length = get_u32(*argv, keyword_suppress_prefixlength);
-			addattr32(&req.n, sizeof(req), FRA_SUPPRESS_PREFIXLEN, prefix_length);
-		} else if (key == ARG_suppress_ifgroup) {
-			int grp;
-			NEXT_ARG();
-			grp = get_u32(*argv, keyword_suppress_ifgroup);
-			addattr32(&req.n, sizeof(req), FRA_SUPPRESS_IFGROUP, grp);
 		} else if (key == ARG_dev ||
 			   key == ARG_iif
 		) {
@@ -314,7 +282,7 @@ static int iprule_modify(int cmd, char **argv)
 			if (key == ARG_help)
 				bb_show_usage();
 			if (rtnl_rtntype_a2n(&type, *argv))
-				invarg_1_to_2(*argv, "type");
+				invarg(*argv, "type");
 			req.r.rtm_type = type;
 		}
 		argv++;
@@ -342,7 +310,7 @@ int FAST_FUNC do_iprule(char **argv)
 	if (*argv) {
 		int cmd = index_in_substrings(ip_rule_commands, *argv);
 		if (cmd < 0)
-			invarg_1_to_2(*argv, applet_name);
+			invarg(*argv, applet_name);
 		argv++;
 		if (cmd < 2)
 			return iprule_modify((cmd == 0) ? RTM_NEWRULE : RTM_DELRULE, argv);

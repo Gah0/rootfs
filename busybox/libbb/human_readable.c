@@ -14,14 +14,20 @@
  *      representations (say, powers of 1024) and manipulating coefficients.
  *      The base ten "bytes" output could be handled similarly.
  *
- *   2) This routine outputs a decimal point and a tenths digit when
- *      display_unit == 0.  Hence, it isn't uncommon for the returned string
+ *   2) This routine always outputs a decimal point and a tenths digit when
+ *      display_unit != 0.  Hence, it isn't uncommon for the returned string
  *      to have a length of 5 or 6.
  *
- *      If block_size is also 0, no decimal digits are printed.
+ *      It might be nice to add a flag to indicate no decimal digits in
+ *      that case.  This could be either an additional parameter, or a
+ *      special value of display_unit.  Such a flag would also be nice for du.
+ *
+ *      Some code to omit the decimal point and tenths digit is sketched out
+ *      and "#if 0"'d below.
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 const char* FAST_FUNC make_human_readable_str(unsigned long long val,
@@ -30,6 +36,8 @@ const char* FAST_FUNC make_human_readable_str(unsigned long long val,
 	static const char unit_chars[] ALIGN1 = {
 		'\0', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y'
 	};
+
+	static char *str;
 
 	unsigned frac; /* 0..9 - the fractional digit */
 	const char *u;
@@ -73,7 +81,12 @@ const char* FAST_FUNC make_human_readable_str(unsigned long long val,
 #endif
 	}
 
-	return auto_string(xasprintf(fmt, val, frac, *u));
+	if (!str) {
+		/* sufficient for any width of val */
+		str = xmalloc(sizeof(val)*3 + 2 + 3);
+	}
+	sprintf(str, fmt, val, frac, *u);
+	return str;
 }
 
 

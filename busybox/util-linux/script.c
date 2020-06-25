@@ -10,39 +10,19 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
-//config:config SCRIPT
-//config:	bool "script (8.6 kb)"
-//config:	default y
-//config:	help
-//config:	The script makes typescript of terminal session.
-
-//applet:IF_SCRIPT(APPLET(script, BB_DIR_USR_BIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_SCRIPT) += script.o
 
 //usage:#define script_trivial_usage
-//usage:       "[-afq] [-t[FILE]] [-c PROG] [OUTFILE]"
+//usage:       "[-afq" IF_SCRIPTREPLAY("t") "] [-c PROG] [OUTFILE]"
 //usage:#define script_full_usage "\n\n"
-//usage:       "Default OUTFILE is 'typescript'"
-//usage:     "\n"
-//usage:     "\n	-a	Append output"
+//usage:       "	-a	Append output"
 //usage:     "\n	-c PROG	Run PROG, not shell"
-/* Accepted but has no effect (we never buffer output) */
-/*//usage:     "\n	-f	Flush output after each write"*/
+//usage:     "\n	-f	Flush output after each write"
 //usage:     "\n	-q	Quiet"
-//usage:     "\n	-t[FILE] Send timing to stderr or FILE"
-
-//util-linux-2.28:
-//-e: return exit code of the child
-
-//FYI (reported as bbox bug #2749):
-// > script -q -c 'echo -e -n "1\n2\n3\n"' /dev/null </dev/null >123.txt
-// > The output file on full-blown ubuntu system contains 6 bytes.
-// > Output on Busybox system (arm-linux) contains extra '\r' byte in each line.
-//however, in my test, "script" from util-linux-2.28 seems to also add '\r' bytes.
+//usage:	IF_SCRIPTREPLAY(
+//usage:     "\n	-t	Send timing to stderr"
+//usage:	)
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 
 int script_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int script_main(int argc UNUSED_PARAM, char **argv)
@@ -56,8 +36,6 @@ int script_main(int argc UNUSED_PARAM, char **argv)
 	char pty_line[GETPTY_BUFSIZE];
 	struct termios tt, rtt;
 	struct winsize win;
-	FILE *timing_fp;
-	const char *str_t = NULL;
 	const char *fname = "typescript";
 	const char *shell;
 	char shell_opt[] = "-i";
@@ -71,19 +49,19 @@ int script_main(int argc UNUSED_PARAM, char **argv)
 	};
 
 #if ENABLE_LONG_OPTS
-	static const char script_longopts[] ALIGN1 =
+	static const char getopt_longopts[] ALIGN1 =
 		"append\0"  No_argument       "a"
 		"command\0" Required_argument "c"
 		"flush\0"   No_argument       "f"
 		"quiet\0"   No_argument       "q"
-		"timing\0"  Optional_argument "t"
+		IF_SCRIPTREPLAY("timing\0" No_argument "t")
 		;
+
+	applet_long_options = getopt_longopts;
 #endif
 
-	opt = getopt32long(argv, "^" "ac:fqt::" "\0" "?1"/* max one arg */,
-				script_longopts,
-				&shell_arg, &str_t
-	);
+	opt_complementary = "?1"; /* max one arg */
+	opt = getopt32(argv, "ac:fq" IF_SCRIPTREPLAY("t") , &shell_arg);
 	//argc -= optind;
 	argv += optind;
 	if (argv[0]) {
@@ -98,10 +76,6 @@ int script_main(int argc UNUSED_PARAM, char **argv)
 	}
 	if (!(opt & OPT_q)) {
 		printf("Script started, file is %s\n", fname);
-	}
-	timing_fp = stderr;
-	if (str_t) {
-		timing_fp = xfopen_for_write(str_t);
 	}
 
 	shell = get_shell_name();
@@ -134,13 +108,11 @@ int script_main(int argc UNUSED_PARAM, char **argv)
 
 	if (child_pid) {
 		/* parent */
+#define buf bb_common_bufsiz1
 		struct pollfd pfd[2];
 		int outfd, count, loop;
-		double oldtime = time(NULL);
+		double oldtime = ENABLE_SCRIPTREPLAY ? time(NULL) : 0;
 		smallint fd_count = 2;
-
-#define buf bb_common_bufsiz1
-		setup_common_bufsiz();
 
 		outfd = xopen(fname, mode);
 		pfd[0].fd = pty;
@@ -162,31 +134,30 @@ int script_main(int argc UNUSED_PARAM, char **argv)
 			}
 			if (pfd[0].revents) {
 				errno = 0;
-				count = safe_read(pty, buf, COMMON_BUFSIZE);
+				count = safe_read(pty, buf, sizeof(buf));
 				if (count <= 0 && errno != EAGAIN) {
 					/* err/eof from pty: exit */
 					goto restore;
 				}
 				if (count > 0) {
-					if (opt & OPT_t) {
+					if (ENABLE_SCRIPTREPLAY && (opt & OPT_t)) {
 						struct timeval tv;
 						double newtime;
 
 						gettimeofday(&tv, NULL);
 						newtime = tv.tv_sec + (double) tv.tv_usec / 1000000;
-						fprintf(timing_fp, "%f %u\n", newtime - oldtime, count);
+						fprintf(stderr, "%f %u\n", newtime - oldtime, count);
 						oldtime = newtime;
 					}
 					full_write(STDOUT_FILENO, buf, count);
 					full_write(outfd, buf, count);
-					// If we'd be using (buffered) FILE i/o, we'd need this:
-					//if (opt & OPT_f) {
-					//	fflush(outfd);
-					//}
+					if (opt & OPT_f) {
+						fsync(outfd);
+					}
 				}
 			}
 			if (pfd[1].revents) {
-				count = safe_read(STDIN_FILENO, buf, COMMON_BUFSIZE);
+				count = safe_read(STDIN_FILENO, buf, sizeof(buf));
 				if (count <= 0) {
 					/* err/eof from stdin: don't read stdin anymore */
 					pfd[1].revents = 0;
@@ -205,7 +176,7 @@ int script_main(int argc UNUSED_PARAM, char **argv)
 		 * (util-linux's script doesn't do this. buggy :) */
 		loop = 999;
 		/* pty is in O_NONBLOCK mode, we exit as soon as buffer is empty */
-		while (--loop && (count = safe_read(pty, buf, COMMON_BUFSIZE)) > 0) {
+		while (--loop && (count = safe_read(pty, buf, sizeof(buf))) > 0) {
 			full_write(STDOUT_FILENO, buf, count);
 			full_write(outfd, buf, count);
 		}

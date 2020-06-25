@@ -6,16 +6,6 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
-//config:config SHOWKEY
-//config:	bool "showkey (4.7 kb)"
-//config:	default y
-//config:	select PLATFORM_LINUX
-//config:	help
-//config:	Shows keys pressed.
-
-//applet:IF_SHOWKEY(APPLET(showkey, BB_DIR_USR_BIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_SHOWKEY) += showkey.o
 
 //usage:#define showkey_trivial_usage
 //usage:       "[-a | -k | -s]"
@@ -56,7 +46,7 @@ static void xset1(struct termios *t)
 {
 	int ret = tcsetattr(STDIN_FILENO, TCSAFLUSH, t);
 	if (ret) {
-		bb_simple_perror_msg("can't tcsetattr for stdin");
+		bb_perror_msg("can't tcsetattr for stdin");
 	}
 }
 
@@ -93,6 +83,7 @@ int showkey_main(int argc UNUSED_PARAM, char **argv)
 			if (04 /*CTRL-D*/ == c)
 				break;
 		}
+
 	} else {
 		// we assume a PC keyboard
 		xioctl(STDIN_FILENO, KDGKBMODE, &kbmode);

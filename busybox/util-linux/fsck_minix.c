@@ -85,20 +85,6 @@
  * The device may be a block device or a image of one, but this isn't
  * enforced (but it's not much fun on a character device :-).
  */
-//config:config FSCK_MINIX
-//config:	bool "fsck.minix (13 kb)"
-//config:	default y
-//config:	help
-//config:	The minix filesystem is a nice, small, compact, read-write filesystem
-//config:	with little overhead. It is not a journaling filesystem however and
-//config:	can experience corruption if it is not properly unmounted or if the
-//config:	power goes off in the middle of a write. This utility allows you to
-//config:	check for and attempt to repair any corruption that occurs to a minix
-//config:	filesystem.
-
-//applet:IF_FSCK_MINIX(APPLET_ODDNAME(fsck.minix, fsck_minix, BB_DIR_SBIN, BB_SUID_DROP, fsck_minix))
-
-//kbuild:lib-$(CONFIG_FSCK_MINIX) += fsck_minix.o
 
 //usage:#define fsck_minix_trivial_usage
 //usage:       "[-larvsmf] BLOCKDEV"
@@ -173,10 +159,7 @@ struct globals {
 
 	/* Bigger stuff */
 	struct termios sv_termios;
-	union {
-		char superblock_buffer[BLOCK_SIZE];
-		struct minix_superblock Super;
-	} u;
+	char superblock_buffer[BLOCK_SIZE];
 	char add_zone_ind_blk[BLOCK_SIZE];
 	char add_zone_dind_blk[BLOCK_SIZE];
 	IF_FEATURE_MINIX2(char add_zone_tind_blk[BLOCK_SIZE];)
@@ -210,7 +193,7 @@ struct globals {
 #define name_depth         (G.name_depth         )
 #define name_component     (G.name_component     )
 #define sv_termios         (G.sv_termios         )
-#define superblock_buffer  (G.u.superblock_buffer)
+#define superblock_buffer  (G.superblock_buffer )
 #define add_zone_ind_blk   (G.add_zone_ind_blk   )
 #define add_zone_dind_blk  (G.add_zone_dind_blk  )
 #define add_zone_tind_blk  (G.add_zone_tind_blk  )
@@ -250,7 +233,7 @@ enum {
 #define Inode1 (((struct minix1_inode *) inode_buffer)-1)
 #define Inode2 (((struct minix2_inode *) inode_buffer)-1)
 
-#define Super (G.u.Super)
+#define Super (*(struct minix_superblock *)(superblock_buffer))
 
 #if ENABLE_FEATURE_MINIX2
 # define ZONES    ((unsigned)(version2 ? Super.s_zones : Super.s_nzones))
@@ -321,7 +304,7 @@ static void die(const char *str)
 {
 	if (termios_set)
 		tcsetattr_stdin_TCSANOW(&sv_termios);
-	bb_simple_error_msg_and_die(str);
+	bb_error_msg_and_die("%s", str);
 }
 
 static void push_filename(const char *name)
@@ -388,9 +371,9 @@ static int ask(const char *string, int def)
 		}
 	}
 	if (def)
-		puts("y");
+		printf("y\n");
 	else {
-		puts("n");
+		printf("n\n");
 		errors_uncorrected = 1;
 	}
 	return def;
@@ -422,7 +405,7 @@ static void check_mount(void)
 		if (isatty(0) && isatty(1))
 			cont = ask("Do you really want to continue", 0);
 		if (!cont) {
-			puts("Check aborted");
+			printf("Check aborted\n");
 			exit(EXIT_SUCCESS);
 		}
 	}
@@ -487,8 +470,8 @@ static void write_block(unsigned nr, void *addr)
 	if (!nr)
 		return;
 	if (nr < FIRSTZONE || nr >= ZONES) {
-		puts("Internal error: trying to write bad block\n"
-			"Write request ignored");
+		printf("Internal error: trying to write bad block\n"
+			   "Write request ignored\n");
 		errors_uncorrected = 1;
 		return;
 	}
@@ -676,7 +659,7 @@ static void read_tables(void)
 	if (INODE_BUFFER_SIZE != read(dev_fd, inode_buffer, INODE_BUFFER_SIZE))
 		die("can't read inodes");
 	if (NORM_FIRSTZONE != FIRSTZONE) {
-		puts("warning: firstzone!=norm_firstzone");
+		printf("warning: firstzone!=norm_firstzone\n");
 		errors_uncorrected = 1;
 	}
 	get_dirsize();
@@ -730,7 +713,7 @@ static void get_inode_common(unsigned nr, uint16_t i_mode)
 	} else
 		links++;
 	if (!++inode_count[nr]) {
-		puts("Warning: inode count too big");
+		printf("Warning: inode count too big\n");
 		inode_count[nr]--;
 		errors_uncorrected = 1;
 	}
@@ -1229,13 +1212,15 @@ void check2(void);
 int fsck_minix_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int fsck_minix_main(int argc UNUSED_PARAM, char **argv)
 {
+	struct termios tmp;
 	int retcode = 0;
 
 	xfunc_error_retval = 8;
 
 	INIT_G();
 
-	getopt32(argv, "^" OPTION_STR "\0" "=1:ar" /* one arg; -a assumes -r */);
+	opt_complementary = "=1:ar"; /* one argument; -a assumes -r */
+	getopt32(argv, OPTION_STR);
 	argv += optind;
 	device_name = argv[0];
 
@@ -1272,7 +1257,10 @@ int fsck_minix_main(int argc UNUSED_PARAM, char **argv)
 	read_tables();
 
 	if (OPT_manual) {
-		set_termios_to_raw(STDIN_FILENO, &sv_termios, 0);
+		tcgetattr(0, &sv_termios);
+		tmp = sv_termios;
+		tmp.c_lflag &= ~(ICANON | ECHO);
+		tcsetattr_stdin_TCSANOW(&tmp);
 		termios_set = 1;
 	}
 
@@ -1311,7 +1299,7 @@ int fsck_minix_main(int argc UNUSED_PARAM, char **argv)
 	}
 	if (changed) {
 		write_tables();
-		puts("FILE SYSTEM HAS BEEN CHANGED");
+		printf("FILE SYSTEM HAS BEEN CHANGED\n");
 		sync();
 	} else if (OPT_repair)
 		write_superblock();

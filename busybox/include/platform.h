@@ -45,13 +45,6 @@
 
 #define UNUSED_PARAM __attribute__ ((__unused__))
 #define NORETURN __attribute__ ((__noreturn__))
-
-#if __GNUC_PREREQ(4,5)
-# define bb_unreachable(altcode) __builtin_unreachable()
-#else
-# define bb_unreachable(altcode) altcode
-#endif
-
 /* "The malloc attribute is used to tell the compiler that a function
  * may be treated as if any non-NULL pointer it returns cannot alias
  * any other pointer valid when the function returns. This will often
@@ -115,18 +108,13 @@
  * and/or smaller by using modified ABI. It is usually only needed
  * on non-static, busybox internal functions. Recent versions of gcc
  * optimize statics automatically. FAST_FUNC on static is required
- * only if you need to match a function pointer's type.
- * FAST_FUNC may not work well with -flto so allow user to disable this.
- * (-DFAST_FUNC= )
- */
-#ifndef FAST_FUNC
-# if __GNUC_PREREQ(3,0) && defined(i386)
+ * only if you need to match a function pointer's type */
+#if __GNUC_PREREQ(3,0) && defined(i386) /* || defined(__x86_64__)? */
 /* stdcall makes callee to pop arguments from stack, not caller */
-#  define FAST_FUNC __attribute__((regparm(3),stdcall))
+# define FAST_FUNC __attribute__((regparm(3),stdcall))
 /* #elif ... - add your favorite arch today! */
-# else
-#  define FAST_FUNC
-# endif
+#else
+# define FAST_FUNC
 #endif
 
 /* Make all declarations hidden (-fvisibility flag only affects definitions) */
@@ -229,17 +217,14 @@ typedef uint64_t bb__aliased_uint64_t FIX_ALIASING;
  * a lvalue. This makes it more likely to not swap them by mistake
  */
 #if defined(i386) || defined(__x86_64__) || defined(__powerpc__)
-# define BB_UNALIGNED_MEMACCESS_OK 1
 # define move_from_unaligned_int(v, intp)  ((v) = *(bb__aliased_int*)(intp))
 # define move_from_unaligned_long(v, longp) ((v) = *(bb__aliased_long*)(longp))
 # define move_from_unaligned16(v, u16p) ((v) = *(bb__aliased_uint16_t*)(u16p))
 # define move_from_unaligned32(v, u32p) ((v) = *(bb__aliased_uint32_t*)(u32p))
 # define move_to_unaligned16(u16p, v)   (*(bb__aliased_uint16_t*)(u16p) = (v))
 # define move_to_unaligned32(u32p, v)   (*(bb__aliased_uint32_t*)(u32p) = (v))
-# define move_to_unaligned64(u64p, v)   (*(bb__aliased_uint64_t*)(u64p) = (v))
 /* #elif ... - add your favorite arch today! */
 #else
-# define BB_UNALIGNED_MEMACCESS_OK 0
 /* performs reasonably well (gcc usually inlines memcpy here) */
 # define move_from_unaligned_int(v, intp) (memcpy(&(v), (intp), sizeof(int)))
 # define move_from_unaligned_long(v, longp) (memcpy(&(v), (longp), sizeof(long)))
@@ -253,22 +238,7 @@ typedef uint64_t bb__aliased_uint64_t FIX_ALIASING;
 	uint32_t __t = (v); \
 	memcpy((u32p), &__t, 4); \
 } while (0)
-# define move_to_unaligned64(u64p, v) do { \
-	uint64_t __t = (v); \
-	memcpy((u64p), &__t, 8); \
-} while (0)
 #endif
-
-/* Unaligned, fixed-endian accessors */
-#define get_unaligned_le32(buf) ({ uint32_t v; move_from_unaligned32(v, buf); SWAP_LE32(v); })
-#define get_unaligned_be32(buf) ({ uint32_t v; move_from_unaligned32(v, buf); SWAP_BE32(v); })
-#define put_unaligned_le32(val, buf) move_to_unaligned32(buf, SWAP_LE32(val))
-#define put_unaligned_be32(val, buf) move_to_unaligned32(buf, SWAP_BE32(val))
-
-/* unxz needs an aligned fixed-endian accessor.
- * (however, the compiler does not realize it's aligned, the cast is still necessary)
- */
-#define get_le32(u32p) ({ uint32_t v = *(bb__aliased_uint32_t*)(u32p); SWAP_LE32(v); })
 
 
 /* ---- Size-saving "small" ints (arch-dependent) ----------- */
@@ -396,12 +366,10 @@ typedef unsigned smalluint;
 #define HAVE_DPRINTF 1
 #define HAVE_MEMRCHR 1
 #define HAVE_MKDTEMP 1
-#define HAVE_TTYNAME_R 1
 #define HAVE_PTSNAME_R 1
 #define HAVE_SETBIT 1
 #define HAVE_SIGHANDLER_T 1
 #define HAVE_STPCPY 1
-#define HAVE_MEMPCPY 1
 #define HAVE_STRCASESTR 1
 #define HAVE_STRCHRNUL 1
 #define HAVE_STRSEP 1
@@ -416,7 +384,6 @@ typedef unsigned smalluint;
 #define HAVE_MNTENT_H 1
 #define HAVE_NET_ETHERNET_H 1
 #define HAVE_SYS_STATFS_H 1
-#define HAVE_PRINTF_PERCENTM 1
 
 #if defined(__UCLIBC__)
 # if UCLIBC_VERSION < KERNEL_VERSION(0, 9, 32)
@@ -472,7 +439,6 @@ typedef unsigned smalluint;
 # undef HAVE_DPRINTF
 # undef HAVE_UNLOCKED_STDIO
 # undef HAVE_UNLOCKED_LINE_OPS
-# undef HAVE_PRINTF_PERCENTM
 #endif
 
 #if defined(__dietlibc__)
@@ -484,8 +450,6 @@ typedef unsigned smalluint;
 #endif
 
 #if defined(__FreeBSD__)
-/* users say mempcpy is not present in FreeBSD 9.x */
-# undef HAVE_MEMPCPY
 # undef HAVE_CLEARENV
 # undef HAVE_FDATASYNC
 # undef HAVE_MNTENT_H
@@ -495,7 +459,6 @@ typedef unsigned smalluint;
 # undef HAVE_STRVERSCMP
 # undef HAVE_XTABS
 # undef HAVE_UNLOCKED_LINE_OPS
-# undef HAVE_PRINTF_PERCENTM
 # include <osreldate.h>
 # if __FreeBSD_version < 1000029
 #  undef HAVE_STRCHRNUL /* FreeBSD added strchrnul() between 1000028 and 1000029 */
@@ -511,26 +474,13 @@ typedef unsigned smalluint;
 #endif
 
 #if defined(ANDROID) || defined(__ANDROID__)
-# if __ANDROID_API__ < 8
-   /* ANDROID < 8 has no [f]dprintf at all */
-#  undef HAVE_DPRINTF
-# elif __ANDROID_API__ < 21
-   /* ANDROID < 21 has fdprintf */
-#  define dprintf fdprintf
-# else
-   /* ANDROID >= 21 has standard dprintf */
-# endif
-# if __ANDROID_API__ < 21
-#  undef HAVE_TTYNAME_R
-#  undef HAVE_GETLINE
-#  undef HAVE_STPCPY
-# endif
-# undef HAVE_MEMPCPY
+# undef HAVE_DPRINTF
+# undef HAVE_GETLINE
+# undef HAVE_STPCPY
 # undef HAVE_STRCHRNUL
 # undef HAVE_STRVERSCMP
 # undef HAVE_UNLOCKED_LINE_OPS
 # undef HAVE_NET_ETHERNET_H
-# undef HAVE_PRINTF_PERCENTM
 #endif
 
 /*
@@ -550,11 +500,6 @@ extern void *memrchr(const void *s, int c, size_t n) FAST_FUNC;
 extern char *mkdtemp(char *template) FAST_FUNC;
 #endif
 
-#ifndef HAVE_TTYNAME_R
-#define ttyname_r bb_ttyname_r
-extern int ttyname_r(int fd, char *buf, size_t buflen);
-#endif
-
 #ifndef HAVE_SETBIT
 # define setbit(a, b)  ((a)[(b) >> 3] |= 1 << ((b) & 7))
 # define clrbit(a, b)  ((a)[(b) >> 3] &= ~(1 << ((b) & 7)))
@@ -566,18 +511,6 @@ typedef void (*sighandler_t)(int);
 
 #ifndef HAVE_STPCPY
 extern char *stpcpy(char *p, const char *to_add) FAST_FUNC;
-#endif
-
-#ifndef HAVE_MEMPCPY
-#include <string.h>
-/* In case we are wrong about !HAVE_MEMPCPY, and toolchain _does_ have
- * mempcpy(), avoid colliding with it:
- */
-#define mempcpy bb__mempcpy
-static ALWAYS_INLINE void *mempcpy(void *dest, const void *src, size_t len)
-{
-	return memcpy(dest, src, len) + len;
-}
 #endif
 
 #ifndef HAVE_STRCASESTR

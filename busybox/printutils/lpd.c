@@ -69,15 +69,6 @@
  * cat ./"$DATAFILE" >/dev/lp0
  * mv -f ./"$DATAFILE" save/
  */
-//config:config LPD
-//config:	bool "lpd (5.5 kb)"
-//config:	default y
-//config:	help
-//config:	lpd is a print spooling daemon.
-
-//applet:IF_LPD(APPLET(lpd, BB_DIR_USR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_LPD) += lpd.o
 
 //usage:#define lpd_trivial_usage
 //usage:       "SPOOLDIR [HELPER [ARGS]]"
@@ -133,8 +124,6 @@ int lpd_main(int argc UNUSED_PARAM, char *argv[])
 
 	// read command
 	s = queue = xmalloc_read_stdin();
-	if (!s) // eof?
-		return EXIT_FAILURE;
 	// we understand only "receive job" command
 	if (2 != *queue) {
  unsupported_cmd:
@@ -200,25 +189,26 @@ int lpd_main(int argc UNUSED_PARAM, char *argv[])
 				q = p; // next line
 			}
 			// helper should not talk over network.
-			// this call reopens stdio fds to "/dev/null".
-			bb_daemon_helper(DAEMON_DEVNULL_STDIO);
+			// this call reopens stdio fds to "/dev/null"
+			// (no daemonization is done)
+			bb_daemonize_or_rexec(DAEMON_DEVNULL_STDIO | DAEMON_ONLY_SANITIZE, NULL);
 			BB_EXECVP_or_die(argv);
 		}
 
 		// validate input.
-		// we understand only "control file" or "data file" subcmds
+		// we understand only "control file" or "data file" cmds
 		if (2 != s[0] && 3 != s[0])
 			goto unsupported_cmd;
 		if (spooling & (1 << (s[0]-1))) {
-			puts("Duplicated subcommand");
+			printf("Duplicated subcommand\n");
 			goto err_exit;
 		}
 		// get filename
-		chomp(s);
+		*strchrnul(s, '\n') = '\0';
 		fname = strchr(s, ' ');
 		if (!fname) {
 // bad_fname:
-			puts("No or bad filename");
+			printf("No or bad filename\n");
 			goto err_exit;
 		}
 		*fname++ = '\0';
@@ -229,13 +219,13 @@ int lpd_main(int argc UNUSED_PARAM, char *argv[])
 		// get length
 		expected_len = bb_strtou(s + 1, NULL, 10);
 		if (errno || expected_len < 0) {
-			puts("Bad length");
+			printf("Bad length\n");
 			goto err_exit;
 		}
 		if (2 == s[0] && expected_len > 16 * 1024) {
 			// SECURITY:
 			// ctrlfile can't be big (we want to read it back later!)
-			puts("File is too big");
+			printf("File is too big\n");
 			goto err_exit;
 		}
 
@@ -293,7 +283,7 @@ int lpd_main(int argc UNUSED_PARAM, char *argv[])
  err_exit:
 	// don't keep corrupted files
 	if (spooling) {
-		int i;
+#define i spooling
 		for (i = 2; --i >= 0; )
 			if (filenames[i])
 				unlink(filenames[i]);

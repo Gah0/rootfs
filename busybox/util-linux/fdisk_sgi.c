@@ -295,19 +295,19 @@ sgi_list_table(int xtra)
 			"%u cylinders, %u physical cylinders\n"
 			"%u extra sects/cyl, interleave %u:1\n"
 			"%s\n"
-			"Units = %ss of %u * 512 bytes\n\n",
+			"Units = %s of %u * 512 bytes\n\n",
 			disk_device, g_heads, g_sectors, g_cylinders,
 			SGI_SSWAP16(sgiparam.pcylcount),
 			SGI_SSWAP16(sgiparam.sparecyl),
 			SGI_SSWAP16(sgiparam.ilfact),
 			(char *)sgilabel,
-			str_units(), units_per_sector);
+			str_units(PLURAL), units_per_sector);
 	} else {
 		printf("\nDisk %s (SGI disk label): "
 			"%u heads, %u sectors, %u cylinders\n"
-			"Units = %ss of %u * 512 bytes\n\n",
+			"Units = %s of %u * 512 bytes\n\n",
 			disk_device, g_heads, g_sectors, g_cylinders,
-			str_units(), units_per_sector );
+			str_units(PLURAL), units_per_sector );
 	}
 
 	w = strlen(disk_device);
@@ -425,7 +425,7 @@ create_sgiinfo(void)
 	/* I keep SGI's habit to write the sgilabel to the second block */
 	sgilabel->directory[0].vol_file_start = SGI_SSWAP32(2);
 	sgilabel->directory[0].vol_file_size = SGI_SSWAP32(sizeof(sgiinfo));
-	memcpy((char*)sgilabel->directory[0].vol_file_name, "sgilabel", 8);
+	strncpy((char*)sgilabel->directory[0].vol_file_name, "sgilabel", 8);
 }
 
 static sgiinfo *fill_sgiinfo(void);
@@ -440,7 +440,7 @@ sgi_write_table(void)
 		(unsigned int*)sgilabel, sizeof(*sgilabel)) == 0);
 
 	write_sector(0, sgilabel);
-	if (is_prefixed_with((char*)sgilabel->directory[0].vol_file_name, "sgilabel")) {
+	if (!strncmp((char*)sgilabel->directory[0].vol_file_name, "sgilabel", 8)) {
 		/*
 		 * keep this habit of first writing the "sgilabel".
 		 * I never tested whether it works without (AN 981002).
@@ -504,19 +504,17 @@ verify_sgi(int verbose)
 	if (sgi_get_sysid(Index[0]) == SGI_ENTIRE_DISK) {
 		if ((Index[0] != 10) && verbose)
 			printf("IRIX likes when Partition 11 covers the entire disk\n");
-		if ((sgi_get_start_sector(Index[0]) != 0) && verbose) {
+		if ((sgi_get_start_sector(Index[0]) != 0) && verbose)
 			printf("The entire disk partition should start "
 				"at block 0,\n"
 				"not at diskblock %u\n",
 				sgi_get_start_sector(Index[0]));
-		}
-		if (SGI_DEBUG) {     /* I do not understand how some disks fulfil it */
+		if (SGI_DEBUG)      /* I do not understand how some disks fulfil it */
 			if ((sgi_get_num_sectors(Index[0]) != lastblock) && verbose)
 				printf("The entire disk partition is only %u diskblock large,\n"
 					"but the disk is %u diskblocks long\n",
 					sgi_get_num_sectors(Index[0]), lastblock);
 			lastblock = sgi_get_num_sectors(Index[0]);
-		}
 	} else {
 		if (verbose)
 			printf("One Partition (#11) should cover the entire disk\n");
@@ -623,7 +621,7 @@ sgi_change_sysid(int i, int sys)
 			"retrieve from its directory standalone tools like sash and fx.\n"
 			"Only the \"SGI volume\" entire disk section may violate this.\n"
 			"Type YES if you are sure about tagging this partition differently.\n");
-		if (strcmp(line_ptr, "YES") != 0)
+		if (strcmp(line_ptr, "YES\n") != 0)
 			return;
 	}
 	sgilabel->partitions[i].id = SGI_SSWAP32(sys);
@@ -671,17 +669,16 @@ sgi_set_volhdr(void)
 	int n;
 
 	for (n = 8; n < g_partitions; n++) {
-		if (!sgi_get_num_sectors(n)) {
-			/*
-			 * 5 cylinders is an arbitrary value I like
-			 * IRIX 5.3 stored files in the volume header
-			 * (like sash, symmon, fx, ide) with ca. 3200
-			 * sectors.
-			 */
-			if (g_heads * g_sectors * 5 < sgi_get_lastblock()) {
-				sgi_set_partition(n, 0, g_heads * g_sectors * 5, SGI_VOLHDR);
-				break;
-			}
+	if (!sgi_get_num_sectors(n)) {
+		/*
+		 * 5 cylinders is an arbitrary value I like
+		 * IRIX 5.3 stored files in the volume header
+		 * (like sash, symmon, fx, ide) with ca. 3200
+		 * sectors.
+		 */
+		if (g_heads * g_sectors * 5 < sgi_get_lastblock())
+			sgi_set_partition(n, 0, g_heads * g_sectors * 5, SGI_VOLHDR);
+			break;
 		}
 	}
 }
@@ -720,7 +717,7 @@ sgi_add_partition(int n, int sys)
 		printf("You got a partition overlap on the disk. Fix it first!\n");
 		return;
 	}
-	snprintf(mesg, sizeof(mesg), "First %s", str_units());
+	snprintf(mesg, sizeof(mesg), "First %s", str_units(SINGULAR));
 	while (1) {
 		if (sys == SGI_VOLUME) {
 			last = sgi_get_lastblock();
@@ -746,7 +743,7 @@ sgi_add_partition(int n, int sys)
 		printf("You will get a partition overlap on the disk. "
 				"Fix it first!\n");
 	}
-	snprintf(mesg, sizeof(mesg), " Last %s", str_units());
+	snprintf(mesg, sizeof(mesg), " Last %s", str_units(SINGULAR));
 	last = read_int(scround(first), scround(last)-1, scround(last)-1,
 			scround(first), mesg)+1;
 	if (display_in_cyl_units)

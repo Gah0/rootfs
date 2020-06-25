@@ -185,15 +185,16 @@ static void handle_accept(isrv_state_t *state, int fd)
 		/* Most probably someone gave us wrong fd type
 		 * (for example, non-socket). Don't want
 		 * to loop forever. */
-		bb_simple_perror_msg_and_die("accept");
+		bb_perror_msg_and_die("accept");
 	}
 
 	DPRINTF("new_peer(%d)", newfd);
 	n = state->new_peer(state, newfd);
 	if (n)
-		remove_peer(state, n); /* unsuccessful peer start */
+		remove_peer(state, n); /* unsuccesful peer start */
 }
 
+void BUG_sizeof_fd_set_is_strange(void);
 static void handle_fd_set(isrv_state_t *state, fd_set *fds, int (*h)(int, void **))
 {
 	enum { LONG_CNT = sizeof(fd_set) / sizeof(long) };
@@ -202,7 +203,8 @@ static void handle_fd_set(isrv_state_t *state, fd_set *fds, int (*h)(int, void *
 	/* need to know value at _the beginning_ of this routine */
 	int fd_cnt = FD_COUNT;
 
-	BUILD_BUG_ON(LONG_CNT * sizeof(long) != sizeof(fd_set));
+	if (LONG_CNT * sizeof(long) != sizeof(fd_set))
+		BUG_sizeof_fd_set_is_strange();
 
 	fds_pos = 0;
 	while (1) {
@@ -311,7 +313,7 @@ void isrv_run(
 
 		if (n < 0) {
 			if (errno != EINTR)
-				bb_simple_perror_msg("select");
+				bb_perror_msg("select");
 			continue;
 		}
 

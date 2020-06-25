@@ -8,21 +8,19 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
-char* FAST_FUNC bb_get_chunk_from_file(FILE *file, size_t *end)
+char* FAST_FUNC bb_get_chunk_from_file(FILE *file, int *end)
 {
 	int ch;
-	size_t idx = 0;
+	unsigned idx = 0;
 	char *linebuf = NULL;
 
 	while ((ch = getc(file)) != EOF) {
 		/* grow the line buffer as necessary */
-		if (!(idx & 0xff)) {
-			if (idx == ((size_t)-1) - 0xff)
-				bb_die_memory_exhausted();
+		if (!(idx & 0xff))
 			linebuf = xrealloc(linebuf, idx + 0x100);
-		}
 		linebuf[idx++] = (char) ch;
 		if (ch == '\0')
 			break;
@@ -47,14 +45,14 @@ char* FAST_FUNC bb_get_chunk_from_file(FILE *file, size_t *end)
 /* Get line, including trailing \n if any */
 char* FAST_FUNC xmalloc_fgets(FILE *file)
 {
-	size_t i;
+	int i;
 
 	return bb_get_chunk_from_file(file, &i);
 }
 /* Get line.  Remove trailing \n */
 char* FAST_FUNC xmalloc_fgetline(FILE *file)
 {
-	size_t i;
+	int i;
 	char *c = bb_get_chunk_from_file(file, &i);
 
 	if (i && c[--i] == '\n')

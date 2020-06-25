@@ -9,32 +9,38 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
-int FAST_FUNC fstype_matches(const char *fstype, const char *comma_list)
+#ifdef HAVE_MNTENT_H
+
+int FAST_FUNC match_fstype(const struct mntent *mt, const char *t_fstype)
 {
 	int match = 1;
+	int len;
 
-	if (!comma_list)
+	if (!t_fstype)
 		return match;
 
-	if (comma_list[0] == 'n' && comma_list[1] == 'o') {
+	if (t_fstype[0] == 'n' && t_fstype[1] == 'o') {
 		match--;
-		comma_list += 2;
+		t_fstype += 2;
 	}
 
+	len = strlen(mt->mnt_type);
 	while (1) {
-		char *after_mnt_type = is_prefixed_with(comma_list, fstype);
-		if (after_mnt_type
-		 && (*after_mnt_type == '\0' || *after_mnt_type == ',')
+		if (strncmp(mt->mnt_type, t_fstype, len) == 0
+		 && (t_fstype[len] == '\0' || t_fstype[len] == ',')
 		) {
 			return match;
 		}
-		comma_list = strchr(comma_list, ',');
-		if (!comma_list)
+		t_fstype = strchr(t_fstype, ',');
+		if (!t_fstype)
 			break;
-		comma_list++;
+		t_fstype++;
 	}
 
 	return !match;
 }
+
+#endif /* HAVE_MNTENT_H */

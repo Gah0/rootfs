@@ -1,6 +1,5 @@
 /* vi: set sw=4 ts=4: */
-/*
- * Print string that matches bit masked flags
+/* Print string that matches bit masked flags
  *
  * Copyright (C) 2008 Natanael Copa <natanael.copa@gmail.com>
  *

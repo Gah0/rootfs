@@ -6,6 +6,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include <mntent.h>
 #include "libbb.h"
 
@@ -21,7 +22,7 @@ void FAST_FUNC erase_mtab(const char *name)
 	/* Bummer. Fall back on trying the /proc filesystem */
 	if (!mountTable) mountTable = setmntent("/proc/mounts", "r");
 	if (!mountTable) {
-		bb_simple_perror_msg(bb_path_mtab_file);
+		bb_perror_msg(bb_path_mtab_file);
 		return;
 	}
 
@@ -49,6 +50,6 @@ void FAST_FUNC erase_mtab(const char *name)
 		}
 		endmntent(mountTable);
 	} else if (errno != EROFS)
-		bb_simple_perror_msg(bb_path_mtab_file);
+		bb_perror_msg(bb_path_mtab_file);
 }
 #endif

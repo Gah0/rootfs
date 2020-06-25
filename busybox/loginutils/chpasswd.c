@@ -5,49 +5,27 @@
  * Written for SLIND (from passwd.c) by Alexander Shishkin <virtuoso@slind.org>
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
-//config:config CHPASSWD
-//config:	bool "chpasswd (18 kb)"
-//config:	default y
-//config:	help
-//config:	Reads a file of user name and password pairs from standard input
-//config:	and uses this information to update a group of existing users.
-//config:
-//config:config FEATURE_DEFAULT_PASSWD_ALGO
-//config:	string "Default encryption method (passwd -a, cryptpw -m, chpasswd -c ALG)"
-//config:	default "des"
-//config:	depends on PASSWD || CRYPTPW || CHPASSWD
-//config:	help
-//config:	Possible choices are "d[es]", "m[d5]", "s[ha256]" or "sha512".
-
-//applet:IF_CHPASSWD(APPLET(chpasswd, BB_DIR_USR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_CHPASSWD) += chpasswd.o
+#include "libbb.h"
 
 //usage:#define chpasswd_trivial_usage
-//usage:	IF_LONG_OPTS("[--md5|--encrypted|--crypt-method|--root]") IF_NOT_LONG_OPTS("[-m|-e|-c|-R]")
+//usage:	IF_LONG_OPTS("[--md5|--encrypted]") IF_NOT_LONG_OPTS("[-m|-e]")
 //usage:#define chpasswd_full_usage "\n\n"
 //usage:       "Read user:password from stdin and update /etc/passwd\n"
 //usage:	IF_LONG_OPTS(
-//usage:     "\n	-e,--encrypted		Supplied passwords are in encrypted form"
-//usage:     "\n	-m,--md5		Encrypt using md5, not des"
-//usage:     "\n	-c,--crypt-method ALG	"CRYPT_METHODS_HELP_STR
-//usage:     "\n	-R,--root DIR		Directory to chroot into"
+//usage:     "\n	-e,--encrypted	Supplied passwords are in encrypted form"
+//usage:     "\n	-m,--md5	Use MD5 encryption instead of DES"
 //usage:	)
 //usage:	IF_NOT_LONG_OPTS(
 //usage:     "\n	-e	Supplied passwords are in encrypted form"
-//usage:     "\n	-m	Encrypt using md5, not des"
-//usage:     "\n	-c ALG	"CRYPT_METHODS_HELP_STR
-//usage:     "\n	-R DIR	Directory to chroot into"
+//usage:     "\n	-m	Use MD5 encryption instead of DES"
 //usage:	)
 
-#include "libbb.h"
+//TODO: implement -c ALGO
 
 #if ENABLE_LONG_OPTS
 static const char chpasswd_longopts[] ALIGN1 =
-	"encrypted\0"    No_argument       "e"
-	"md5\0"          No_argument       "m"
-	"crypt-method\0" Required_argument "c"
-	"root\0"         Required_argument "R"
+	"encrypted\0" No_argument "e"
+	"md5\0"       No_argument "m"
 	;
 #endif
 
@@ -58,21 +36,14 @@ int chpasswd_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int chpasswd_main(int argc UNUSED_PARAM, char **argv)
 {
 	char *name;
-	const char *algo = CONFIG_FEATURE_DEFAULT_PASSWD_ALGO;
-	const char *root = NULL;
 	int opt;
 
 	if (getuid() != 0)
-		bb_simple_error_msg_and_die(bb_msg_perm_denied_are_you_root);
+		bb_error_msg_and_die(bb_msg_perm_denied_are_you_root);
 
-	opt = getopt32long(argv, "^" "emc:R:" "\0" "m--ec:e--mc:c--em",
-			chpasswd_longopts,
-			&algo, &root
-	);
-
-	if (root) {
-		xchroot(root);
-	}
+	opt_complementary = "m--e:e--m";
+	IF_LONG_OPTS(applet_long_options = chpasswd_longopts;)
+	opt = getopt32(argv, "em");
 
 	while ((name = xmalloc_fgetline(stdin)) != NULL) {
 		char *free_me;
@@ -81,21 +52,22 @@ int chpasswd_main(int argc UNUSED_PARAM, char **argv)
 
 		pass = strchr(name, ':');
 		if (!pass)
-			bb_simple_error_msg_and_die("missing new password");
+			bb_error_msg_and_die("missing new password");
 		*pass++ = '\0';
 
 		xuname2uid(name); /* dies if there is no such user */
 
 		free_me = NULL;
 		if (!(opt & OPT_ENC)) {
-			char salt[MAX_PW_SALT_LEN];
+			char salt[sizeof("$N$XXXXXXXX")];
 
+			crypt_make_salt(salt, 1);
 			if (opt & OPT_MD5) {
-				/* Force MD5 if the -m flag is set */
-				algo = "md5";
+				salt[0] = '$';
+				salt[1] = '1';
+				salt[2] = '$';
+				crypt_make_salt(salt + 3, 4);
 			}
-
-			crypt_make_pw_salt(salt, algo);
 			free_me = pass = pw_encrypt(pass, salt, 0);
 		}
 
@@ -114,7 +86,7 @@ int chpasswd_main(int argc UNUSED_PARAM, char **argv)
 		if (rc < 0)
 			bb_error_msg_and_die("an error occurred updating password for %s", name);
 		if (rc)
-			bb_info_msg("password for '%s' changed", name);
+			bb_info_msg("Password for '%s' changed", name);
 		logmode = LOGMODE_STDIO;
 		free(name);
 		free(free_me);

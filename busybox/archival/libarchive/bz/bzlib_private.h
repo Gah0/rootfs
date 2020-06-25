@@ -120,11 +120,8 @@ typedef struct EState {
 
 	/* mode this stream is in, and whether inputting */
 	/* or outputting data */
-	uint8_t mode;
-	uint8_t state;
-
-	/* misc administratium */
-	uint8_t blockSize100k;
+	int32_t  mode;
+	int32_t  state;
 
 	/* remembers avail_in when flush/finish requested */
 /* bbox: not needed, strm->avail_in always has the same value */
@@ -132,18 +129,19 @@ typedef struct EState {
 	/* uint32_t avail_in_expect; */
 
 	/* for doing the block sorting */
+	int32_t  origPtr;
 	uint32_t *arr1;
 	uint32_t *arr2;
 	uint32_t *ftab;
-
-	uint16_t *quadrant;
-	int32_t  budget;
 
 	/* aliases for arr1 and arr2 */
 	uint32_t *ptr;
 	uint8_t  *block;
 	uint16_t *mtfv;
 	uint8_t  *zbits;
+
+	/* guess what */
+	uint32_t *crc32table;
 
 	/* run-length-encoding of the input */
 	uint32_t state_in_ch;
@@ -152,16 +150,12 @@ typedef struct EState {
 	/* input and output limits and current posns */
 	int32_t  nblock;
 	int32_t  nblockMAX;
-	//int32_t  numZ; // index into s->zbits[], replaced by pointer:
-	uint8_t  *posZ;
-	uint8_t  *state_out_pos;
+	int32_t  numZ;
+	int32_t  state_out_pos;
 
 	/* the buffer for bit stream creation */
 	uint32_t bsBuff;
 	int32_t  bsLive;
-
-	/* guess what */
-	uint32_t *crc32table;
 
 	/* block and combined CRCs */
 	uint32_t blockCRC;
@@ -169,6 +163,7 @@ typedef struct EState {
 
 	/* misc administratium */
 	int32_t  blockNo;
+	int32_t  blockSize100k;
 
 	/* stuff for coding the MTF values */
 	int32_t  nMTF;
@@ -188,7 +183,7 @@ typedef struct EState {
 	/* stack-saving measures: these can be local, but they are too big */
 	int32_t  sendMTFValues__code [BZ_N_GROUPS][BZ_MAX_ALPHA_SIZE];
 	int32_t  sendMTFValues__rfreq[BZ_N_GROUPS][BZ_MAX_ALPHA_SIZE];
-#if BZIP2_SPEED >= 5
+#if CONFIG_BZIP2_FAST >= 5
 	/* second dimension: only 3 needed; 4 makes index calculations faster */
 	uint32_t sendMTFValues__len_pack[BZ_MAX_ALPHA_SIZE][4];
 #endif
@@ -196,6 +191,7 @@ typedef struct EState {
 	int32_t  BZ2_hbMakeCodeLengths__weight[BZ_MAX_ALPHA_SIZE * 2];
 	int32_t  BZ2_hbMakeCodeLengths__parent[BZ_MAX_ALPHA_SIZE * 2];
 
+	int32_t  mainSort__runningOrder[256];
 	int32_t  mainSort__copyStart[256];
 	int32_t  mainSort__copyEnd[256];
 } EState;
@@ -203,7 +199,7 @@ typedef struct EState {
 
 /*-- compression. --*/
 
-static int32_t
+static void
 BZ2_blockSort(EState*);
 
 static void

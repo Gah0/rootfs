@@ -4,6 +4,7 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
+
 #include <errno.h>
 
 struct globals;

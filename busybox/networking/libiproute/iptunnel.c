@@ -10,6 +10,7 @@
  * Rani Assaf <rani@magic.metawire.com> 980930: do not allow key for ipip/sit
  * Phil Karn <karn@ka9q.ampr.org>       990408: "pmtudisc" flag
  */
+
 #include <netinet/ip.h>
 #include <net/if.h>
 #include <net/if_arp.h>
@@ -293,7 +294,7 @@ static void parse_args(char **argv, int cmd, struct ip_tunnel_parm *p)
 			if (key != ARG_inherit) {
 				uval = get_unsigned(*argv, "TTL");
 				if (uval > 255)
-					invarg_1_to_2(*argv, "TTL");
+					invarg(*argv, "TTL must be <=255");
 				p->iph.ttl = uval;
 			}
 		} else if (key == ARG_tos ||
@@ -304,7 +305,7 @@ static void parse_args(char **argv, int cmd, struct ip_tunnel_parm *p)
 			key = index_in_strings(keywords, *argv);
 			if (key != ARG_inherit) {
 				if (rtnl_dsfield_a2n(&uval, *argv))
-					invarg_1_to_2(*argv, "TOS");
+					invarg(*argv, "TOS");
 				p->iph.tos = uval;
 			} else
 				p->iph.tos = 1;
@@ -338,7 +339,7 @@ static void parse_args(char **argv, int cmd, struct ip_tunnel_parm *p)
 
 	if (p->iph.protocol == IPPROTO_IPIP || p->iph.protocol == IPPROTO_IPV6) {
 		if ((p->i_flags & GRE_KEY) || (p->o_flags & GRE_KEY)) {
-			bb_simple_error_msg_and_die("keys are not allowed with ipip and sit");
+			bb_error_msg_and_die("keys are not allowed with ipip and sit");
 		}
 	}
 
@@ -355,7 +356,7 @@ static void parse_args(char **argv, int cmd, struct ip_tunnel_parm *p)
 		p->o_flags |= GRE_KEY;
 	}
 	if (IN_MULTICAST(ntohl(p->iph.daddr)) && !p->iph.saddr) {
-		bb_simple_error_msg_and_die("broadcast tunnel requires a source address");
+		bb_error_msg_and_die("broadcast tunnel requires a source address");
 	}
 }
 
@@ -367,7 +368,7 @@ static int do_add(int cmd, char **argv)
 	parse_args(argv, cmd, &p);
 
 	if (p.iph.ttl && p.iph.frag_off == 0) {
-		bb_simple_error_msg_and_die("ttl != 0 and noptmudisc are incompatible");
+		bb_error_msg_and_die("ttl != 0 and noptmudisc are incompatible");
 	}
 
 	switch (p.iph.protocol) {
@@ -378,7 +379,7 @@ static int do_add(int cmd, char **argv)
 	case IPPROTO_IPV6:
 		return do_add_ioctl(cmd, "sit0", &p);
 	default:
-		bb_simple_error_msg_and_die("can't determine tunnel mode (ipip, gre or sit)");
+		bb_error_msg_and_die("can't determine tunnel mode (ipip, gre or sit)");
 	}
 }
 
@@ -403,18 +404,22 @@ static int do_del(char **argv)
 
 static void print_tunnel(struct ip_tunnel_parm *p)
 {
-	char s3[INET_ADDRSTRLEN];
-	char s4[INET_ADDRSTRLEN];
+	char s1[256];
+	char s2[256];
+	char s3[64];
+	char s4[64];
+
+	format_host(AF_INET, 4, &p->iph.daddr, s1, sizeof(s1));
+	format_host(AF_INET, 4, &p->iph.saddr, s2, sizeof(s2));
+	inet_ntop(AF_INET, &p->i_key, s3, sizeof(s3));
+	inet_ntop(AF_INET, &p->o_key, s4, sizeof(s4));
 
 	printf("%s: %s/ip  remote %s  local %s ",
-		p->name,
-		p->iph.protocol == IPPROTO_IPIP ? "ip" :
-			p->iph.protocol == IPPROTO_GRE ? "gre" :
-			p->iph.protocol == IPPROTO_IPV6 ? "ipv6" :
-			"unknown",
-		p->iph.daddr ? format_host(AF_INET, 4, &p->iph.daddr) : "any",
-		p->iph.saddr ? format_host(AF_INET, 4, &p->iph.saddr) : "any"
-	);
+	       p->name,
+	       p->iph.protocol == IPPROTO_IPIP ? "ip" :
+	       (p->iph.protocol == IPPROTO_GRE ? "gre" :
+		(p->iph.protocol == IPPROTO_IPV6 ? "ipv6" : "unknown")),
+	       p->iph.daddr ? s1 : "any", p->iph.saddr ? s2 : "any");
 	if (p->link) {
 		char *n = do_ioctl_get_ifname(p->link);
 		if (n) {
@@ -427,21 +432,20 @@ static void print_tunnel(struct ip_tunnel_parm *p)
 	else
 		printf(" ttl inherit ");
 	if (p->iph.tos) {
+		SPRINT_BUF(b1);
 		printf(" tos");
 		if (p->iph.tos & 1)
 			printf(" inherit");
 		if (p->iph.tos & ~1)
 			printf("%c%s ", p->iph.tos & 1 ? '/' : ' ',
-				rtnl_dsfield_n2a(p->iph.tos & ~1));
+				rtnl_dsfield_n2a(p->iph.tos & ~1, b1));
 	}
 	if (!(p->iph.frag_off & htons(IP_DF)))
 		printf(" nopmtudisc");
 
-	inet_ntop(AF_INET, &p->i_key, s3, sizeof(s3));
-	inet_ntop(AF_INET, &p->o_key, s4, sizeof(s4));
 	if ((p->i_flags & GRE_KEY) && (p->o_flags & GRE_KEY) && p->o_key == p->i_key)
 		printf(" key %s", s3);
-	else {
+	else if ((p->i_flags | p->o_flags) & GRE_KEY) {
 		if (p->i_flags & GRE_KEY)
 			printf(" ikey %s ", s3);
 		if (p->o_flags & GRE_KEY)
@@ -485,7 +489,7 @@ static void do_tunnels_list(struct ip_tunnel_parm *p)
 		if (ptr == NULL ||
 		    (*ptr++ = 0, sscanf(buf, "%s", name) != 1)
 		) {
-			bb_simple_error_msg("wrong format of /proc/net/dev");
+			bb_error_msg("wrong format of /proc/net/dev");
 			return;
 		}
 		if (sscanf(ptr, "%lu%lu%lu%lu%lu%lu%lu%*d%lu%lu%lu%lu%lu%lu%lu",
@@ -559,7 +563,7 @@ int FAST_FUNC do_iptunnel(char **argv)
 	if (*argv) {
 		int key = index_in_substrings(keywords, *argv);
 		if (key < 0)
-			invarg_1_to_2(*argv, applet_name);
+			invarg(*argv, applet_name);
 		argv++;
 		if (key == ARG_add)
 			return do_add(SIOCADDTUNNEL, argv);

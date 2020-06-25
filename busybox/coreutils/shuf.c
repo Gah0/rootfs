@@ -6,15 +6,15 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 //config:config SHUF
-//config:	bool "shuf (5.4 kb)"
+//config:	bool "shuf"
 //config:	default y
 //config:	help
-//config:	Generate random permutations
-
-//applet:IF_SHUF(APPLET_NOEXEC(shuf, shuf, BB_DIR_USR_BIN, BB_SUID_DROP, shuf))
+//config:	  Generate random permutations
 
 //kbuild:lib-$(CONFIG_SHUF) += shuf.o
+//applet:IF_SHUF(APPLET_NOEXEC(shuf, shuf, BB_DIR_USR_BIN, BB_SUID_DROP, shuf))
 
 //usage:#define shuf_trivial_usage
 //usage:       "[-e|-i L-H] [-n NUM] [-o FILE] [-z] [FILE|ARG...]"
@@ -53,7 +53,7 @@ static void shuffle_lines(char **lines, unsigned numlines)
 		/* RAND_MAX can be as small as 32767 */
 		if (i > RAND_MAX)
 			r ^= rand() << 15;
-		r %= i + 1;
+		r %= i;
 		tmp = lines[i];
 		lines[i] = lines[r];
 		lines[r] = tmp;
@@ -70,11 +70,8 @@ int shuf_main(int argc, char **argv)
 	unsigned numlines;
 	char eol;
 
-	opts = getopt32(argv, "^"
-			OPT_STR
-			"\0" "e--i:i--e"/* mutually exclusive */,
-			&opt_i_str, &opt_n_str, &opt_o_str
-	);
+	opt_complementary = "e--i:i--e"; /* mutually exclusive */
+	opts = getopt32(argv, OPT_STR, &opt_i_str, &opt_n_str, &opt_o_str);
 
 	argc -= optind;
 	argv += optind;
@@ -97,7 +94,7 @@ int shuf_main(int argc, char **argv)
 		*dash = '\0';
 		lo = xatou(opt_i_str);
 		hi = xatou(dash + 1);
-		*dash = '-';
+	 	*dash = '-';
 		if (hi < lo) {
 			bb_error_msg_and_die("bad range '%s'", opt_i_str);
 		}

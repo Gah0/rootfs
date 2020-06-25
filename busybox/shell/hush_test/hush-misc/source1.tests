@@ -1,5 +1,10 @@
-echo "echo Sourced ok" >../sourced.sh
-PATH="..:$PATH"
-. sourced.sh
-rm ../sourced.sh
-echo Done
+echo 'echo ${^}
+echo line2' >sourced1
+. ./sourced1
+echo Ok1:$?
+
+echo "echo '" >sourced1
+. ./sourced1
+echo Ok2:$?
+
+rm sourced1

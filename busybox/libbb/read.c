@@ -12,17 +12,9 @@ ssize_t FAST_FUNC safe_read(int fd, void *buf, size_t count)
 {
 	ssize_t n;
 
-	for (;;) {
+	do {
 		n = read(fd, buf, count);
-		if (n >= 0 || errno != EINTR)
-			break;
-		/* Some callers set errno=0, are upset when they see EINTR.
-		 * Returning EINTR is wrong since we retry read(),
-		 * the "error" was transient.
-		 */
-		errno = 0;
-		/* repeat the read() */
-	}
+	} while (n < 0 && errno == EINTR);
 
 	return n;
 }

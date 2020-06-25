@@ -12,115 +12,6 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
-//config:config SYSLOGD
-//config:	bool "syslogd (13 kb)"
-//config:	default y
-//config:	help
-//config:	The syslogd utility is used to record logs of all the
-//config:	significant events that occur on a system. Every
-//config:	message that is logged records the date and time of the
-//config:	event, and will generally also record the name of the
-//config:	application that generated the message. When used in
-//config:	conjunction with klogd, messages from the Linux kernel
-//config:	can also be recorded. This is terribly useful,
-//config:	especially for finding what happened when something goes
-//config:	wrong. And something almost always will go wrong if
-//config:	you wait long enough....
-//config:
-//config:config FEATURE_ROTATE_LOGFILE
-//config:	bool "Rotate message files"
-//config:	default y
-//config:	depends on SYSLOGD
-//config:	help
-//config:	This enables syslogd to rotate the message files
-//config:	on his own. No need to use an external rotate script.
-//config:
-//config:config FEATURE_REMOTE_LOG
-//config:	bool "Remote Log support"
-//config:	default y
-//config:	depends on SYSLOGD
-//config:	help
-//config:	When you enable this feature, the syslogd utility can
-//config:	be used to send system log messages to another system
-//config:	connected via a network. This allows the remote
-//config:	machine to log all the system messages, which can be
-//config:	terribly useful for reducing the number of serial
-//config:	cables you use. It can also be a very good security
-//config:	measure to prevent system logs from being tampered with
-//config:	by an intruder.
-//config:
-//config:config FEATURE_SYSLOGD_DUP
-//config:	bool "Support -D (drop dups) option"
-//config:	default y
-//config:	depends on SYSLOGD
-//config:	help
-//config:	Option -D instructs syslogd to drop consecutive messages
-//config:	which are totally the same.
-//config:
-//config:config FEATURE_SYSLOGD_CFG
-//config:	bool "Support syslog.conf"
-//config:	default y
-//config:	depends on SYSLOGD
-//config:	help
-//config:	Supports restricted syslogd config. See docs/syslog.conf.txt
-//config:
-//config:config FEATURE_SYSLOGD_PRECISE_TIMESTAMPS
-//config:	bool "Include milliseconds in timestamps"
-//config:	default n
-//config:	depends on SYSLOGD
-//config:	help
-//config:	Includes milliseconds (HH:MM:SS.mmm) in timestamp when
-//config:	timestamps are added.
-//config:
-//config:config FEATURE_SYSLOGD_READ_BUFFER_SIZE
-//config:	int "Read buffer size in bytes"
-//config:	default 256
-//config:	range 256 20000
-//config:	depends on SYSLOGD
-//config:	help
-//config:	This option sets the size of the syslog read buffer.
-//config:	Actual memory usage increases around five times the
-//config:	change done here.
-//config:
-//config:config FEATURE_IPC_SYSLOG
-//config:	bool "Circular Buffer support"
-//config:	default y
-//config:	depends on SYSLOGD
-//config:	help
-//config:	When you enable this feature, the syslogd utility will
-//config:	use a circular buffer to record system log messages.
-//config:	When the buffer is filled it will continue to overwrite
-//config:	the oldest messages. This can be very useful for
-//config:	systems with little or no permanent storage, since
-//config:	otherwise system logs can eventually fill up your
-//config:	entire filesystem, which may cause your system to
-//config:	break badly.
-//config:
-//config:config FEATURE_IPC_SYSLOG_BUFFER_SIZE
-//config:	int "Circular buffer size in Kbytes (minimum 4KB)"
-//config:	default 16
-//config:	range 4 2147483647
-//config:	depends on FEATURE_IPC_SYSLOG
-//config:	help
-//config:	This option sets the size of the circular buffer
-//config:	used to record system log messages.
-//config:
-//config:config FEATURE_KMSG_SYSLOG
-//config:	bool "Linux kernel printk buffer support"
-//config:	default y
-//config:	depends on SYSLOGD
-//config:	select PLATFORM_LINUX
-//config:	help
-//config:	When you enable this feature, the syslogd utility will
-//config:	write system log message to the Linux kernel's printk buffer.
-//config:	This can be used as a smaller alternative to the syslogd IPC
-//config:	support, as klogd and logread aren't needed.
-//config:
-//config:	NOTICE: Syslog facilities in log entries needs kernel 3.5+.
-
-//applet:IF_SYSLOGD(APPLET(syslogd, BB_DIR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_SYSLOGD) += syslogd_and_logger.o
 
 //usage:#define syslogd_trivial_usage
 //usage:       "[OPTIONS]"
@@ -141,21 +32,20 @@
 //usage:	IF_FEATURE_KMSG_SYSLOG(
 //usage:     "\n	-K		Log to kernel printk buffer (use dmesg to read it)"
 //usage:	)
-//usage:     "\n	-O FILE		Log to FILE (default: /var/log/messages, stdout if -)"
+//usage:     "\n	-O FILE		Log to FILE (default:/var/log/messages, stdout if -)"
 //usage:	IF_FEATURE_ROTATE_LOGFILE(
-//usage:     "\n	-s SIZE		Max size (KB) before rotation (default 200KB, 0=off)"
-//usage:     "\n	-b N		N rotated logs to keep (default 1, max 99, 0=purge)"
+//usage:     "\n	-s SIZE		Max size (KB) before rotation (default:200KB, 0=off)"
+//usage:     "\n	-b N		N rotated logs to keep (default:1, max=99, 0=purge)"
 //usage:	)
 //usage:     "\n	-l N		Log only messages more urgent than prio N (1-8)"
 //usage:     "\n	-S		Smaller output"
-//usage:     "\n	-t		Strip client-generated timestamps"
 //usage:	IF_FEATURE_SYSLOGD_DUP(
 //usage:     "\n	-D		Drop duplicates"
 //usage:	)
 //usage:	IF_FEATURE_SYSLOGD_CFG(
 //usage:     "\n	-f FILE		Use FILE as config (default:/etc/syslog.conf)"
 //usage:	)
-/* //usage:  "\n	-m MIN		Minutes between MARK lines (default 20, 0=off)" */
+/* //usage:  "\n	-m MIN		Minutes between MARK lines (default:20, 0=off)" */
 //usage:
 //usage:#define syslogd_example_usage
 //usage:       "$ syslogd -R masterlog:514\n"
@@ -284,7 +174,7 @@ struct globals {
 	/* ...then copy to parsebuf, escaping control chars */
 	/* (can grow x2 max) */
 	char parsebuf[MAX_READ*2];
-	/* ...then sprintf into printbuf, adding timestamp (15 or 19 chars),
+	/* ...then sprintf into printbuf, adding timestamp (15 chars),
 	 * host (64), fac.prio (20) to the message */
 	/* (growth by: 15 + 64 + 20 + delims = ~110) */
 	char printbuf[MAX_READ*2 + 128];
@@ -325,7 +215,6 @@ enum {
 	OPTBIT_outfile, // -O
 	OPTBIT_loglevel, // -l
 	OPTBIT_small, // -S
-	OPTBIT_timestamp, // -t
 	IF_FEATURE_ROTATE_LOGFILE(OPTBIT_filesize   ,)	// -s
 	IF_FEATURE_ROTATE_LOGFILE(OPTBIT_rotatecnt  ,)	// -b
 	IF_FEATURE_REMOTE_LOG(    OPTBIT_remotelog  ,)	// -R
@@ -340,7 +229,6 @@ enum {
 	OPT_outfile     = 1 << OPTBIT_outfile ,
 	OPT_loglevel    = 1 << OPTBIT_loglevel,
 	OPT_small       = 1 << OPTBIT_small   ,
-	OPT_timestamp   = 1 << OPTBIT_timestamp,
 	OPT_filesize    = IF_FEATURE_ROTATE_LOGFILE((1 << OPTBIT_filesize   )) + 0,
 	OPT_rotatecnt   = IF_FEATURE_ROTATE_LOGFILE((1 << OPTBIT_rotatecnt  )) + 0,
 	OPT_remotelog   = IF_FEATURE_REMOTE_LOG(    (1 << OPTBIT_remotelog  )) + 0,
@@ -349,11 +237,12 @@ enum {
 	OPT_dup         = IF_FEATURE_SYSLOGD_DUP(   (1 << OPTBIT_dup        )) + 0,
 	OPT_cfg         = IF_FEATURE_SYSLOGD_CFG(   (1 << OPTBIT_cfg        )) + 0,
 	OPT_kmsg        = IF_FEATURE_KMSG_SYSLOG(   (1 << OPTBIT_kmsg       )) + 0,
+
 };
-#define OPTION_STR "m:nO:l:St" \
+#define OPTION_STR "m:nO:l:S" \
 	IF_FEATURE_ROTATE_LOGFILE("s:" ) \
 	IF_FEATURE_ROTATE_LOGFILE("b:" ) \
-	IF_FEATURE_REMOTE_LOG(    "R:*") \
+	IF_FEATURE_REMOTE_LOG(    "R:" ) \
 	IF_FEATURE_REMOTE_LOG(    "L"  ) \
 	IF_FEATURE_IPC_SYSLOG(    "C::") \
 	IF_FEATURE_SYSLOGD_DUP(   "D"  ) \
@@ -458,7 +347,7 @@ static void parse_syslogdcfg(const char *file)
 				primap = 0xff; /* all 8 log levels enabled */
 			else {
 				uint8_t priority;
-				code = find_by_name(t, bb_prioritynames);
+				code = find_by_name(t, prioritynames);
 				if (!code)
 					goto cfgerr;
 				primap = 0;
@@ -491,7 +380,7 @@ static void parse_syslogdcfg(const char *file)
 					next_facility = strchr(t, ',');
 					if (next_facility)
 						*next_facility++ = '\0';
-					code = find_by_name(t, bb_facilitynames);
+					code = find_by_name(t, facilitynames);
 					if (!code)
 						goto cfgerr;
 					/* "mark" is not a real facility, skip it */
@@ -580,12 +469,12 @@ static void ipcsyslog_init(void)
 
 	G.shmid = shmget(KEY_ID, G.shm_size, IPC_CREAT | 0644);
 	if (G.shmid == -1) {
-		bb_simple_perror_msg_and_die("shmget");
+		bb_perror_msg_and_die("shmget");
 	}
 
 	G.shbuf = shmat(G.shmid, NULL, 0);
 	if (G.shbuf == (void*) -1L) { /* shmat has bizarre error return */
-		bb_simple_perror_msg_and_die("shmat");
+		bb_perror_msg_and_die("shmat");
 	}
 
 	memset(G.shbuf, 0, G.shm_size);
@@ -600,7 +489,7 @@ static void ipcsyslog_init(void)
 			if (G.s_semid != -1)
 				return;
 		}
-		bb_simple_perror_msg_and_die("semget");
+		bb_perror_msg_and_die("semget");
 	}
 }
 
@@ -611,7 +500,7 @@ static void log_to_shmem(const char *msg)
 	int len;
 
 	if (semop(G.s_semid, G.SMwdn, 3) == -1) {
-		bb_simple_perror_msg_and_die("SMwdn");
+		bb_perror_msg_and_die("SMwdn");
 	}
 
 	/* Circular Buffer Algorithm:
@@ -639,7 +528,7 @@ static void log_to_shmem(const char *msg)
 		goto again;
 	}
 	if (semop(G.s_semid, G.SMwup, 1) == -1) {
-		bb_simple_perror_msg_and_die("SMwup");
+		bb_perror_msg_and_die("SMwup");
 	}
 	if (DEBUG)
 		printf("tail:%d\n", G.shbuf->tail);
@@ -808,9 +697,9 @@ static void parse_fac_prio_20(int pri, char *res20)
 {
 	const CODE *c_pri, *c_fac;
 
-	c_fac = find_by_val(LOG_FAC(pri) << 3, bb_facilitynames);
+	c_fac = find_by_val(LOG_FAC(pri) << 3, facilitynames);
 	if (c_fac) {
-		c_pri = find_by_val(LOG_PRI(pri), bb_prioritynames);
+		c_pri = find_by_val(LOG_PRI(pri), prioritynames);
 		if (c_pri) {
 			snprintf(res20, 20, "%s.%s", c_fac->c_name, c_pri->c_name);
 			return;
@@ -824,40 +713,22 @@ static void parse_fac_prio_20(int pri, char *res20)
  * that there is no timestamp, short-circuiting the test. */
 static void timestamp_and_log(int pri, char *msg, int len)
 {
-	char *timestamp = NULL;
+	char *timestamp;
 	time_t now;
 
 	/* Jan 18 00:11:22 msg... */
 	/* 01234567890123456 */
-	if (len >= 16 && msg[3] == ' ' && msg[6] == ' '
-	 && msg[9] == ':' && msg[12] == ':' && msg[15] == ' '
+	if (len < 16 || msg[3] != ' ' || msg[6] != ' '
+	 || msg[9] != ':' || msg[12] != ':' || msg[15] != ' '
 	) {
-		if (!(option_mask32 & OPT_timestamp)) {
-			/* use message timestamp */
-			timestamp = msg;
-			now = 0;
-		}
-		msg += 16;
-	}
-
-#if ENABLE_FEATURE_SYSLOGD_PRECISE_TIMESTAMPS
-	if (!timestamp) {
-		struct timeval tv;
-		gettimeofday(&tv, NULL);
-		now = tv.tv_sec;
-		timestamp = ctime(&now) + 4; /* skip day of week */
-		/* overwrite year by milliseconds, zero terminate */
-		sprintf(timestamp + 15, ".%03u", (unsigned)tv.tv_usec / 1000u);
-	} else {
-		timestamp[15] = '\0';
-	}
-#else
-	if (!timestamp) {
 		time(&now);
 		timestamp = ctime(&now) + 4; /* skip day of week */
+	} else {
+		now = 0;
+		timestamp = msg;
+		msg += 16;
 	}
 	timestamp[15] = '\0';
-#endif
 
 	if (option_mask32 & OPT_kmsg) {
 		log_to_kmsg(pri, msg);
@@ -964,6 +835,11 @@ static NOINLINE int create_socket(void)
 	struct sockaddr_un sunx;
 	int sock_fd;
 	char *dev_log_name;
+
+#if ENABLE_FEATURE_SYSTEMD
+	if (sd_listen_fds() == 1)
+		return SD_LISTEN_FDS_START;
+#endif
 
 	memset(&sunx, 0, sizeof(sunx));
 	sunx.sun_family = AF_UNIX;
@@ -1118,7 +994,7 @@ static void do_syslogd(void)
 	} /* while (!bb_got_signal) */
 
 	timestamp_and_log_internal("syslogd exiting");
-	remove_pidfile_std_path_and_ext("syslogd");
+	remove_pidfile(CONFIG_PID_FILE_PATH "/syslogd.pid");
 	ipcsyslog_cleanup();
 	if (option_mask32 & OPT_kmsg)
 		kmsg_cleanup();
@@ -1137,8 +1013,9 @@ int syslogd_main(int argc UNUSED_PARAM, char **argv)
 
 	INIT_G();
 
-	/* No non-option params */
-	opts = getopt32(argv, "^"OPTION_STR"\0""=0", OPTION_PARAM);
+	/* No non-option params, -R can occur multiple times */
+	opt_complementary = "=0" IF_FEATURE_REMOTE_LOG(":R::");
+	opts = getopt32(argv, OPTION_STR, OPTION_PARAM);
 #if ENABLE_FEATURE_REMOTE_LOG
 	while (remoteAddrList) {
 		remoteHost_t *rh = xzalloc(sizeof(*rh));
@@ -1184,7 +1061,7 @@ int syslogd_main(int argc UNUSED_PARAM, char **argv)
 	}
 
 	//umask(0); - why??
-	write_pidfile_std_path_and_ext("syslogd");
+	write_pidfile(CONFIG_PID_FILE_PATH "/syslogd.pid");
 
 	do_syslogd();
 	/* return EXIT_SUCCESS; */

@@ -8,33 +8,12 @@
  *
  * Rani Assaf <rani@magic.metawire.com> 980929: resolve addresses
  */
+
 #include "libbb.h"
 #include "utils.h"
 #include "inet_common.h"
 
-unsigned FAST_FUNC get_hz(void)
-{
-	static unsigned hz_internal;
-	FILE *fp;
-
-	if (hz_internal)
-		return hz_internal;
-
-	fp = fopen_for_read("/proc/net/psched");
-	if (fp) {
-		unsigned nom, denom;
-
-		if (fscanf(fp, "%*08x%*08x%08x%08x", &nom, &denom) == 2)
-			if (nom == 1000000)
-				hz_internal = denom;
-		fclose(fp);
-	}
-	if (!hz_internal)
-		hz_internal = bb_clk_tck();
-	return hz_internal;
-}
-
-unsigned FAST_FUNC get_unsigned(char *arg, const char *errmsg)
+unsigned get_unsigned(char *arg, const char *errmsg)
 {
 	unsigned long res;
 	char *ptr;
@@ -46,10 +25,10 @@ unsigned FAST_FUNC get_unsigned(char *arg, const char *errmsg)
 			return res;
 		}
 	}
-	invarg_1_to_2(arg, errmsg); /* does not return */
+	invarg(arg, errmsg); /* does not return */
 }
 
-uint32_t FAST_FUNC get_u32(char *arg, const char *errmsg)
+uint32_t get_u32(char *arg, const char *errmsg)
 {
 	unsigned long res;
 	char *ptr;
@@ -61,10 +40,10 @@ uint32_t FAST_FUNC get_u32(char *arg, const char *errmsg)
 			return res;
 		}
 	}
-	invarg_1_to_2(arg, errmsg); /* does not return */
+	invarg(arg, errmsg); /* does not return */
 }
 
-uint16_t FAST_FUNC get_u16(char *arg, const char *errmsg)
+uint16_t get_u16(char *arg, const char *errmsg)
 {
 	unsigned long res;
 	char *ptr;
@@ -76,10 +55,10 @@ uint16_t FAST_FUNC get_u16(char *arg, const char *errmsg)
 			return res;
 		}
 	}
-	invarg_1_to_2(arg, errmsg); /* does not return */
+	invarg(arg, errmsg); /* does not return */
 }
 
-int FAST_FUNC get_addr_1(inet_prefix *addr, char *name, int family)
+int get_addr_1(inet_prefix *addr, char *name, int family)
 {
 	memset(addr, 0, sizeof(*addr));
 
@@ -198,7 +177,7 @@ static void get_prefix_1(inet_prefix *dst, char *arg, int family)
 	bb_error_msg_and_die("an %s %s is expected rather than \"%s\"", "inet", "prefix", arg);
 }
 
-int FAST_FUNC get_addr(inet_prefix *dst, char *arg, int family)
+int get_addr(inet_prefix *dst, char *arg, int family)
 {
 	if (family == AF_PACKET) {
 		bb_error_msg_and_die("\"%s\" may be inet %s, but it is not allowed in this context", arg, "address");
@@ -209,7 +188,7 @@ int FAST_FUNC get_addr(inet_prefix *dst, char *arg, int family)
 	return 0;
 }
 
-void FAST_FUNC get_prefix(inet_prefix *dst, char *arg, int family)
+void get_prefix(inet_prefix *dst, char *arg, int family)
 {
 	if (family == AF_PACKET) {
 		bb_error_msg_and_die("\"%s\" may be inet %s, but it is not allowed in this context", arg, "prefix");
@@ -217,7 +196,7 @@ void FAST_FUNC get_prefix(inet_prefix *dst, char *arg, int family)
 	get_prefix_1(dst, arg, family);
 }
 
-uint32_t FAST_FUNC get_addr32(char *name)
+uint32_t get_addr32(char *name)
 {
 	inet_prefix addr;
 
@@ -227,29 +206,27 @@ uint32_t FAST_FUNC get_addr32(char *name)
 	return addr.data[0];
 }
 
-char** FAST_FUNC next_arg(char **argv)
+void incomplete_command(void)
 {
-	if (!*++argv)
-		bb_simple_error_msg_and_die("command line is not complete, try \"help\"");
-	return argv;
+	bb_error_msg_and_die("command line is not complete, try option \"help\"");
 }
 
-void FAST_FUNC invarg_1_to_2(const char *arg, const char *opt)
+void invarg(const char *arg, const char *opt)
 {
-	bb_error_msg_and_die(bb_msg_invalid_arg_to, arg, opt);
+	bb_error_msg_and_die(bb_msg_invalid_arg, arg, opt);
 }
 
-void FAST_FUNC duparg(const char *key, const char *arg)
+void duparg(const char *key, const char *arg)
 {
 	bb_error_msg_and_die("duplicate \"%s\": \"%s\" is the second value", key, arg);
 }
 
-void FAST_FUNC duparg2(const char *key, const char *arg)
+void duparg2(const char *key, const char *arg)
 {
 	bb_error_msg_and_die("either \"%s\" is duplicate, or \"%s\" is garbage", key, arg);
 }
 
-int FAST_FUNC inet_addr_match(const inet_prefix *a, const inet_prefix *b, int bits)
+int inet_addr_match(const inet_prefix *a, const inet_prefix *b, int bits)
 {
 	const uint32_t *a1 = a->data;
 	const uint32_t *a2 = b->data;
@@ -277,21 +254,20 @@ int FAST_FUNC inet_addr_match(const inet_prefix *a, const inet_prefix *b, int bi
 	return 0;
 }
 
-const char* FAST_FUNC rt_addr_n2a(int af, void *addr)
+const char *rt_addr_n2a(int af,
+		void *addr, char *buf, int buflen)
 {
 	switch (af) {
 	case AF_INET:
 	case AF_INET6:
-		return inet_ntop(af, addr,
-			auto_string(xzalloc(INET6_ADDRSTRLEN)), INET6_ADDRSTRLEN
-		);
+		return inet_ntop(af, addr, buf, buflen);
 	default:
 		return "???";
 	}
 }
 
 #ifdef RESOLVE_HOSTNAMES
-const char* FAST_FUNC format_host(int af, int len, void *addr)
+const char *format_host(int af, int len, void *addr, char *buf, int buflen)
 {
 	if (resolve_hosts) {
 		struct hostent *h_ent;
@@ -310,10 +286,11 @@ const char* FAST_FUNC format_host(int af, int len, void *addr)
 		if (len > 0) {
 			h_ent = gethostbyaddr(addr, len, af);
 			if (h_ent != NULL) {
-				return auto_string(xstrdup(h_ent->h_name));
+				safe_strncpy(buf, h_ent->h_name, buflen);
+				return buf;
 			}
 		}
 	}
-	return rt_addr_n2a(af, addr);
+	return rt_addr_n2a(af, addr, buf, buflen);
 }
 #endif

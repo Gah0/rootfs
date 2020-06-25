@@ -1,23 +1,25 @@
 /* vi: set sw=4 ts=4: */
-/*
- * stty -- change and print terminal line settings
- * Copyright (C) 1990-1999 Free Software Foundation, Inc.
- *
- * Licensed under GPLv2 or later, see file LICENSE in this source tree.
- */
-/* David MacKenzie <djm@gnu.ai.mit.edu>
- *
- * Special for busybox ported by Vladimir Oleynik <dzo@simtreas.ru> 2001
- */
-//config:config STTY
-//config:	bool "stty (8.9 kb)"
-//config:	default y
-//config:	help
-//config:	stty is used to change and print terminal line settings.
+/* stty -- change and print terminal line settings
+   Copyright (C) 1990-1999 Free Software Foundation, Inc.
 
-//applet:IF_STTY(APPLET_NOEXEC(stty, stty, BB_DIR_BIN, BB_SUID_DROP, stty))
+   Licensed under GPLv2 or later, see file LICENSE in this source tree.
+*/
+/* Usage: stty [-ag] [-F device] [setting...]
 
-//kbuild:lib-$(CONFIG_STTY) += stty.o
+   Options:
+   -a Write all current settings to stdout in human-readable form.
+   -g Write all current settings to stdout in stty-readable form.
+   -F Open and use the specified device instead of stdin
+
+   If no args are given, write to stdout the baud rate and settings that
+   have been changed from their defaults.  Mode reading and changes
+   are done on the specified device, or stdin if none was specified.
+
+   David MacKenzie <djm@gnu.ai.mit.edu>
+
+   Special for busybox ported by Vladimir Oleynik <dzo@simtreas.ru> 2001
+
+   */
 
 //usage:#define stty_trivial_usage
 //usage:       "[-a|g] [-F DEVICE] [SETTING]..."
@@ -29,13 +31,7 @@
 //usage:     "\n	-g		Print in stty-readable form"
 //usage:     "\n	[SETTING]	See manpage"
 
-/* If no args are given, write to stdout the baud rate and settings that
- * have been changed from their defaults.  Mode reading and changes
- * are done on the specified device, or stdin if none was specified.
- */
-
 #include "libbb.h"
-#include "common_bufsiz.h"
 
 #ifndef _POSIX_VDISABLE
 # define _POSIX_VDISABLE ((unsigned char) 0)
@@ -142,9 +138,6 @@
 #endif
 #ifndef CRDLY
 # define CRDLY 0
-#endif
-#ifndef CMSPAR
-# define CMSPAR 0
 #endif
 #ifndef CRTSCTS
 # define CRTSCTS 0
@@ -324,7 +317,7 @@ enum {
 #define MI_ENTRY(N,T,F,B,M) N "\0"
 
 /* Mode names given on command line */
-static const char mode_name[] ALIGN1 =
+static const char mode_name[] =
 	MI_ENTRY("evenp",    combination, REV        | OMIT, 0,          0 )
 	MI_ENTRY("parity",   combination, REV        | OMIT, 0,          0 )
 	MI_ENTRY("oddp",     combination, REV        | OMIT, 0,          0 )
@@ -350,9 +343,6 @@ static const char mode_name[] ALIGN1 =
 #endif
 	MI_ENTRY("parenb",   control,     REV,               PARENB,     0 )
 	MI_ENTRY("parodd",   control,     REV,               PARODD,     0 )
-#if CMSPAR
-	MI_ENTRY("cmspar",   control,     REV,               CMSPAR,     0 )
-#endif
 	MI_ENTRY("cs5",      control,     0,                 CS5,     CSIZE)
 	MI_ENTRY("cs6",      control,     0,                 CS6,     CSIZE)
 	MI_ENTRY("cs7",      control,     0,                 CS7,     CSIZE)
@@ -477,10 +467,6 @@ static const char mode_name[] ALIGN1 =
 #if ECHOKE
 	MI_ENTRY("echoke",   local,       SANE_SET   | REV,  ECHOKE,     0 )
 	MI_ENTRY("crtkill",  local,       OMIT       | REV,  ECHOKE,     0 )
-#endif
-	MI_ENTRY("flusho",   local,       SANE_UNSET | REV,  FLUSHO,     0 )
-#ifdef EXTPROC
-	MI_ENTRY("extproc",  local,       SANE_UNSET | REV,  EXTPROC,    0 )
 #endif
 	;
 
@@ -514,9 +500,6 @@ static const struct mode_info mode_info[] = {
 #endif
 	MI_ENTRY("parenb",   control,     REV,               PARENB,     0 )
 	MI_ENTRY("parodd",   control,     REV,               PARODD,     0 )
-#if CMSPAR
-	MI_ENTRY("cmspar",   control,     REV,               CMSPAR,     0 )
-#endif
 	MI_ENTRY("cs5",      control,     0,                 CS5,     CSIZE)
 	MI_ENTRY("cs6",      control,     0,                 CS6,     CSIZE)
 	MI_ENTRY("cs7",      control,     0,                 CS7,     CSIZE)
@@ -641,10 +624,6 @@ static const struct mode_info mode_info[] = {
 #if ECHOKE
 	MI_ENTRY("echoke",   local,       SANE_SET   | REV,  ECHOKE,     0 )
 	MI_ENTRY("crtkill",  local,       OMIT       | REV,  ECHOKE,     0 )
-#endif
-	MI_ENTRY("flusho",   local,       SANE_UNSET | REV,  FLUSHO,     0 )
-#ifdef EXTPROC
-	MI_ENTRY("extproc",  local,       SANE_UNSET | REV,  EXTPROC,    0 )
 #endif
 };
 
@@ -701,7 +680,7 @@ enum {
 #define CI_ENTRY(n,s,o) n "\0"
 
 /* Name given on command line */
-static const char control_name[] ALIGN1 =
+static const char control_name[] =
 	CI_ENTRY("intr",     CINTR,   VINTR   )
 	CI_ENTRY("quit",     CQUIT,   VQUIT   )
 	CI_ENTRY("erase",    CERASE,  VERASE  )
@@ -743,7 +722,7 @@ static const char control_name[] ALIGN1 =
 #undef CI_ENTRY
 #define CI_ENTRY(n,s,o) { s, o },
 
-static const struct control_info control_info[] ALIGN2 = {
+static const struct control_info control_info[] = {
 	/* This should be verbatim cut-n-paste copy of the above CI_ENTRYs */
 	CI_ENTRY("intr",     CINTR,   VINTR   )
 	CI_ENTRY("quit",     CQUIT,   VQUIT   )
@@ -794,13 +773,12 @@ struct globals {
 	unsigned max_col;
 	/* Current position, to know when to wrap */
 	unsigned current_col;
+	char buf[10];
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
+#define G (*(struct globals*)&bb_common_bufsiz1)
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	G.device_name = bb_msg_standard_input; \
 	G.max_col = 80; \
-	G.current_col = 0; /* we are noexec, must clear */ \
 } while (0)
 
 static void set_speed_or_die(enum speed_setting type, const char *arg,
@@ -848,11 +826,10 @@ static void wrapf(const char *message, ...)
 		G.current_col++;
 		if (buf[0] != '\n') {
 			if (G.current_col + buflen >= G.max_col) {
-				G.current_col = 0;
 				bb_putchar('\n');
-			} else {
+				G.current_col = 0;
+			} else
 				bb_putchar(' ');
-			}
 		}
 	}
 	fputs(buf, stdout);
@@ -1032,8 +1009,6 @@ static void do_display(const struct termios *mode, int all)
 
 	for (i = 0; i != CIDX_min; ++i) {
 		char ch;
-		char buf10[10];
-
 		/* If swtch is the same as susp, don't print both */
 #if VSWTCH == VSUSP
 		if (i == CIDX_swtch)
@@ -1049,10 +1024,10 @@ static void do_display(const struct termios *mode, int all)
 #endif
 		ch = mode->c_cc[control_info[i].offset];
 		if (ch == _POSIX_VDISABLE)
-			strcpy(buf10, "<undef>");
+			strcpy(G.buf, "<undef>");
 		else
-			visible(ch, buf10, 0);
-		wrapf("%s = %s;", nth_string(control_name, i), buf10);
+			visible(ch, G.buf, 0);
+		wrapf("%s = %s;", nth_string(control_name, i), G.buf);
 	}
 #if VEOF == VMIN
 	if ((mode->c_lflag & ICANON) == 0)
@@ -1320,7 +1295,7 @@ int stty_main(int argc UNUSED_PARAM, char **argv)
 					break;
 				case 'F':
 					if (file_name)
-						bb_simple_error_msg_and_die("only one device may be specified");
+						bb_error_msg_and_die("only one device may be specified");
 					file_name = &arg[i+1]; /* "-Fdevice" ? */
 					if (!file_name[0]) { /* nope, "-F device" */
 						int p = k+1; /* argv[p] is argnext */
@@ -1405,13 +1380,13 @@ int stty_main(int argc UNUSED_PARAM, char **argv)
 	if ((stty_state & (STTY_verbose_output | STTY_recoverable_output)) ==
 		(STTY_verbose_output | STTY_recoverable_output)
 	) {
-		bb_simple_error_msg_and_die("-a and -g are mutually exclusive");
+		bb_error_msg_and_die("-a and -g are mutually exclusive");
 	}
 	/* Specifying -a or -g with non-options is an error */
 	if ((stty_state & (STTY_verbose_output | STTY_recoverable_output))
 	 && !(stty_state & STTY_noargs)
 	) {
-		bb_simple_error_msg_and_die("modes may not be set when -a or -g is used");
+		bb_error_msg_and_die("modes may not be set when -a or -g is used");
 	}
 
 	/* Now it is safe to start doing things */
@@ -1428,7 +1403,7 @@ int stty_main(int argc UNUSED_PARAM, char **argv)
 		perror_on_device_and_die("%s");
 
 	if (stty_state & (STTY_verbose_output | STTY_recoverable_output | STTY_noargs)) {
-		G.max_col = get_terminal_width(STDOUT_FILENO);
+		get_terminal_width_height(STDOUT_FILENO, &G.max_col, NULL);
 		output_func(&mode, display_all);
 		return EXIT_SUCCESS;
 	}

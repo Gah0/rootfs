@@ -12,7 +12,6 @@
 #include <netinet/if_ether.h>
 #include <netpacket/packet.h>
 
-#if ENABLE_UDHCPC || ENABLE_UDHCPD
 void FAST_FUNC udhcp_init_header(struct dhcp_packet *packet, char type)
 {
 	memset(packet, 0, sizeof(*packet));
@@ -30,7 +29,6 @@ void FAST_FUNC udhcp_init_header(struct dhcp_packet *packet, char type)
 		packet->options[0] = DHCP_END;
 	udhcp_add_simple_option(packet, DHCP_MESSAGE_TYPE, type);
 }
-#endif
 
 #if defined CONFIG_UDHCP_DEBUG && CONFIG_UDHCP_DEBUG >= 2
 void FAST_FUNC udhcp_dump_packet(struct dhcp_packet *packet)
@@ -52,6 +50,7 @@ void FAST_FUNC udhcp_dump_packet(struct dhcp_packet *packet)
 		" yiaddr %x"
 		" siaddr %x"
 		" giaddr %x"
+		//" chaddr %s"
 		//" sname %s"
 		//" file %s"
 		//" cookie %x"
@@ -67,6 +66,7 @@ void FAST_FUNC udhcp_dump_packet(struct dhcp_packet *packet)
 		, packet->yiaddr
 		, packet->siaddr_nip
 		, packet->gateway_nip
+		//, packet->chaddr[16]
 		//, packet->sname[64]
 		//, packet->file[128]
 		//, packet->cookie
@@ -85,17 +85,17 @@ int FAST_FUNC udhcp_recv_kernel_packet(struct dhcp_packet *packet, int fd)
 	memset(packet, 0, sizeof(*packet));
 	bytes = safe_read(fd, packet, sizeof(*packet));
 	if (bytes < 0) {
-		log1s("packet read error, ignoring");
+		log1("Packet read error, ignoring");
 		return bytes; /* returns -1 */
 	}
 
 	if (bytes < offsetof(struct dhcp_packet, options)
 	 || packet->cookie != htonl(DHCP_MAGIC)
 	) {
-		bb_simple_info_msg("packet with bad magic, ignoring");
+		bb_info_msg("Packet with bad magic, ignoring");
 		return -2;
 	}
-	log1("received %s", "a packet");
+	log1("Received a packet");
 	udhcp_dump_packet(packet);
 
 	return bytes;
@@ -127,8 +127,6 @@ int FAST_FUNC udhcp_send_raw_packet(struct dhcp_packet *dhcp_pkt,
 	dest_sll.sll_family = AF_PACKET;
 	dest_sll.sll_protocol = htons(ETH_P_IP);
 	dest_sll.sll_ifindex = ifindex;
-	/*dest_sll.sll_hatype = ARPHRD_???;*/
-	/*dest_sll.sll_pkttype = PACKET_???;*/
 	dest_sll.sll_halen = 6;
 	memcpy(dest_sll.sll_addr, dest_arp, 6);
 

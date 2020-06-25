@@ -17,26 +17,10 @@ status() { printf '  %-8s%s\n' "$1" "$2"; }
 gen() { status "GEN" "$@"; }
 chk() { status "CHK" "$@"; }
 
-# scripts in the 'embed' directory are treated as fake applets
-custom_scripts()
-{
-	custom_loc="$1"
-	if [ -d "$custom_loc" ]
-	then
-		for i in $(cd "$custom_loc"; ls * 2>/dev/null)
-		do
-			printf "IF_FEATURE_SH_EMBEDDED_SCRIPTS(APPLET_SCRIPTED(%s, scripted, BB_DIR_USR_BIN, BB_SUID_DROP, scripted))\n" $i;
-		done
-	fi
-}
-
 generate()
 {
 	# NB: data to be inserted at INSERT line is coming on stdin
-	src="$1"
-	dst="$2"
-	header="$3"
-	loc="$4"
+	local src="$1" dst="$2" header="$3"
 	#chk "${dst}"
 	{
 		# Need to use printf: different shells have inconsistent
@@ -46,10 +30,6 @@ generate()
 		sed -n '/^INSERT$/ q; p' "${src}"
 		# copy stdin to stdout
 		cat
-		if [ -n "$loc" ]
-		then
-			custom_scripts "$loc"
-		fi
 		# print everything after INSERT line
 		sed -n '/^INSERT$/ {
 		:l
@@ -71,8 +51,7 @@ sed -n 's@^//applet:@@p' "$srctree"/*/*.c "$srctree"/*/*/*.c \
 | generate \
 	"$srctree/include/applets.src.h" \
 	"include/applets.h" \
-	"/* DO NOT EDIT. This file is generated from applets.src.h */" \
-	"$srctree/embed"
+	"/* DO NOT EDIT. This file is generated from applets.src.h */"
 
 # (Re)generate include/usage.h
 # We add line continuation backslash after each line,

@@ -6,44 +6,21 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
+
 #include <sys/types.h>
 #include <sys/socket.h> /* netinet/in.h needs it */
 #include <netinet/in.h>
 #include <net/if.h>
 #include <sys/un.h>
-#if ENABLE_IFPLUGD || ENABLE_FEATURE_MDEV_DAEMON || ENABLE_UEVENT
-# include <linux/netlink.h>
-#endif
 #include "libbb.h"
-
-int FAST_FUNC setsockopt_int(int fd, int level, int optname, int optval)
-{
-	return setsockopt(fd, level, optname, &optval, sizeof(int));
-}
-int FAST_FUNC setsockopt_1(int fd, int level, int optname)
-{
-	return setsockopt_int(fd, level, optname, 1);
-}
-int FAST_FUNC setsockopt_SOL_SOCKET_int(int fd, int optname, int optval)
-{
-	return setsockopt_int(fd, SOL_SOCKET, optname, optval);
-}
-int FAST_FUNC setsockopt_SOL_SOCKET_1(int fd, int optname)
-{
-	return setsockopt_SOL_SOCKET_int(fd, optname, 1);
-}
 
 void FAST_FUNC setsockopt_reuseaddr(int fd)
 {
-	setsockopt_SOL_SOCKET_1(fd, SO_REUSEADDR);
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &const_int_1, sizeof(const_int_1));
 }
 int FAST_FUNC setsockopt_broadcast(int fd)
 {
-	return setsockopt_SOL_SOCKET_1(fd, SO_BROADCAST);
-}
-int FAST_FUNC setsockopt_keepalive(int fd)
-{
-	return setsockopt_SOL_SOCKET_1(fd, SO_KEEPALIVE);
+	return setsockopt(fd, SOL_SOCKET, SO_BROADCAST, &const_int_1, sizeof(const_int_1));
 }
 
 #ifdef SO_BINDTODEVICE
@@ -66,7 +43,7 @@ int FAST_FUNC setsockopt_bindtodevice(int fd, const char *iface)
 int FAST_FUNC setsockopt_bindtodevice(int fd UNUSED_PARAM,
 		const char *iface UNUSED_PARAM)
 {
-	bb_simple_error_msg("SO_BINDTODEVICE is not supported on this system");
+	bb_error_msg("SO_BINDTODEVICE is not supported on this system");
 	return -1;
 }
 #endif
@@ -109,7 +86,7 @@ void FAST_FUNC xconnect(int s, const struct sockaddr *s_addr, socklen_t addrlen)
 			bb_perror_msg_and_die("%s (%s)",
 				"can't connect to remote host",
 				inet_ntoa(((struct sockaddr_in *)s_addr)->sin_addr));
-		bb_simple_perror_msg_and_die("can't connect to remote host");
+		bb_perror_msg_and_die("can't connect to remote host");
 	}
 }
 
@@ -133,7 +110,6 @@ unsigned FAST_FUNC bb_lookup_port(const char *port, const char *protocol, unsign
 			port_nr = default_port;
 			if (tserv)
 				port_nr = ntohs(tserv->s_port);
-//FIXME: else: port string was garbage, but we don't report that???
 		}
 		errno = old_errno;
 	}
@@ -195,7 +171,7 @@ IF_NOT_FEATURE_IPV6(sa_family_t af = AF_INET;)
 	const char *cp;
 	struct addrinfo hint;
 
-	if (ENABLE_FEATURE_UNIX_LOCAL && is_prefixed_with(host, "local:")) {
+	if (ENABLE_FEATURE_UNIX_LOCAL && strncmp(host, "local:", 6) == 0) {
 		struct sockaddr_un *sun;
 
 		r = xzalloc(LSA_LEN_SIZE + sizeof(struct sockaddr_un));
@@ -416,38 +392,6 @@ int FAST_FUNC create_and_bind_dgram_or_die(const char *bindaddr, int port)
 }
 
 
-#if ENABLE_IFPLUGD || ENABLE_FEATURE_MDEV_DAEMON || ENABLE_UEVENT
-int FAST_FUNC create_and_bind_to_netlink(int proto, int grp, unsigned rcvbuf)
-{
-	struct sockaddr_nl sa;
-	int fd;
-
-	memset(&sa, 0, sizeof(sa));
-	sa.nl_family = AF_NETLINK;
-	sa.nl_pid = getpid();
-	sa.nl_groups = grp;
-	fd = xsocket(AF_NETLINK, SOCK_DGRAM, proto);
-	xbind(fd, (struct sockaddr *) &sa, sizeof(sa));
-	close_on_exec_on(fd);
-
-	if (rcvbuf != 0) {
-		// SO_RCVBUFFORCE (root only) can go above net.core.rmem_max sysctl
-		setsockopt_SOL_SOCKET_int(fd, SO_RCVBUF,      rcvbuf);
-		setsockopt_SOL_SOCKET_int(fd, SO_RCVBUFFORCE, rcvbuf);
-# if 0
-		{
-			int z;
-			socklen_t zl = sizeof(z);
-			getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &z, &zl);
-			bb_error_msg("SO_RCVBUF:%d", z);
-		}
-# endif
-	}
-
-	return fd;
-}
-#endif
-
 int FAST_FUNC create_and_connect_stream_or_die(const char *peer, int port)
 {
 	int fd;
@@ -531,15 +475,12 @@ char* FAST_FUNC xmalloc_sockaddr2hostonly_noport(const struct sockaddr *sa)
 {
 	return sockaddr2str(sa, NI_NAMEREQD | IGNORE_PORT);
 }
-#ifndef NI_NUMERICSCOPE
-# define NI_NUMERICSCOPE 0
-#endif
 char* FAST_FUNC xmalloc_sockaddr2dotted(const struct sockaddr *sa)
 {
-	return sockaddr2str(sa, NI_NUMERICHOST | NI_NUMERICSCOPE);
+	return sockaddr2str(sa, NI_NUMERICHOST);
 }
 
 char* FAST_FUNC xmalloc_sockaddr2dotted_noport(const struct sockaddr *sa)
 {
-	return sockaddr2str(sa, NI_NUMERICHOST | NI_NUMERICSCOPE | IGNORE_PORT);
+	return sockaddr2str(sa, NI_NUMERICHOST | IGNORE_PORT);
 }

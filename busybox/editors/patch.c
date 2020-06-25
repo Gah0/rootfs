@@ -15,16 +15,18 @@
  * -D define wrap #ifdef and #ifndef around changes
  * -o outfile output here instead of in place
  * -r rejectfile write rejected hunks to this file
+ * --dry-run (regression!)
  *
  * -f force (no questions asked)
  * -F fuzz (number, default 2)
  * [file] which file to patch
  */
+
 //config:config PATCH
-//config:	bool "patch (9.4 kb)"
+//config:	bool "patch"
 //config:	default y
 //config:	help
-//config:	Apply a unified diff formatted patch.
+//config:	  Apply a unified diff formatted patch.
 
 //applet:IF_PATCH(APPLET(patch, BB_DIR_USR_BIN, BB_SUID_DROP))
 
@@ -33,15 +35,23 @@
 //usage:#define patch_trivial_usage
 //usage:       "[OPTIONS] [ORIGFILE [PATCHFILE]]"
 //usage:#define patch_full_usage "\n\n"
+//usage:	IF_LONG_OPTS(
+//usage:       "	-p,--strip N		Strip N leading components from file names"
+//usage:     "\n	-i,--input DIFF		Read DIFF instead of stdin"
+//usage:     "\n	-R,--reverse		Reverse patch"
+//usage:     "\n	-N,--forward		Ignore already applied patches"
+/*usage:     "\n	--dry-run		Don't actually change files" - TODO */
+//usage:     "\n	-E,--remove-empty-files	Remove output files if they become empty"
+//usage:	)
+//usage:	IF_NOT_LONG_OPTS(
 //usage:       "	-p N	Strip N leading components from file names"
 //usage:     "\n	-i DIFF	Read DIFF instead of stdin"
 //usage:     "\n	-R	Reverse patch"
 //usage:     "\n	-N	Ignore already applied patches"
 //usage:     "\n	-E	Remove output files if they become empty"
-//usage:	IF_LONG_OPTS(
-//usage:     "\n	--dry-run	Don't actually change files"
 //usage:	)
 /* -u "interpret as unified diff" is supported but not documented: this info is not useful for --help */
+/* -x "debug" is supported but does nothing */
 //usage:
 //usage:#define patch_example_usage
 //usage:       "$ patch -p1 < example.diff\n"
@@ -49,7 +59,6 @@
 
 #include "libbb.h"
 
-#define PATCH_DEBUG  0
 
 // libbb candidate?
 
@@ -114,18 +123,16 @@ struct globals {
 } while (0)
 
 
-#define FLAG_STR "Rup:i:NEfg"
+#define FLAG_STR "Rup:i:NEx"
 /* FLAG_REVERSE must be == 1! Code uses this fact. */
-#define FLAG_REVERSE  (1 << 0)
-#define FLAG_u        (1 << 1)
-#define FLAG_PATHLEN  (1 << 2)
-#define FLAG_INPUT    (1 << 3)
-#define FLAG_IGNORE   (1 << 4)
-#define FLAG_RMEMPTY  (1 << 5)
-#define FLAG_f_unused (1 << 6)
-#define FLAG_g_unused (1 << 7)
-#define FLAG_dry_run  ((1 << 8) * ENABLE_LONG_OPTS)
-
+#define FLAG_REVERSE (1 << 0)
+#define FLAG_u       (1 << 1)
+#define FLAG_PATHLEN (1 << 2)
+#define FLAG_INPUT   (1 << 3)
+#define FLAG_IGNORE  (1 << 4)
+#define FLAG_RMEMPTY (1 << 5)
+/* Enable this bit and use -x for debug output: */
+#define FLAG_DEBUG   (0 << 6)
 
 // Dispose of a line of input, either by writing it out or discarding it.
 
@@ -133,6 +140,8 @@ struct globals {
 // state = 2: write whole line to stderr
 // state = 3: write whole line to fileout
 // state > 3: write line+1 to fileout when *line != state
+
+#define PATCH_DEBUG (option_mask32 & FLAG_DEBUG)
 
 static void do_line(void *data)
 {
@@ -160,14 +169,12 @@ static void finish_oldfile(void)
 		}
 		xclose(TT.fileout);
 
-		if (!ENABLE_LONG_OPTS || TT.tempname[0]) { /* not --dry-run? */
-			temp = xstrdup(TT.tempname);
-			temp[strlen(temp) - 6] = '\0';
-			rename(TT.tempname, temp);
-			free(temp);
-			free(TT.tempname);
-		}
+		temp = xstrdup(TT.tempname);
+		temp[strlen(temp) - 6] = '\0';
+		rename(TT.tempname, temp);
+		free(temp);
 
+		free(TT.tempname);
 		TT.tempname = NULL;
 	}
 	TT.fileout = TT.filein = -1;
@@ -191,10 +198,8 @@ static void fail_hunk(void)
 	// Abort the copy and delete the temporary file.
 	close(TT.filein);
 	close(TT.fileout);
-	if (!ENABLE_LONG_OPTS || TT.tempname[0]) { /* not --dry-run? */
-		unlink(TT.tempname);
-		free(TT.tempname);
-	}
+	unlink(TT.tempname);
+	free(TT.tempname);
 	TT.tempname = NULL;
 
 	TT.state = 0;
@@ -235,7 +240,6 @@ static int apply_one_hunk(void)
 	plist = TT.current_hunk;
 	buf = NULL;
 	if (reverse ? TT.oldlen : TT.newlen) for (;;) {
-//FIXME: this performs 1-byte reads:
 		char *data = xmalloc_reads(TT.filein, NULL);
 
 		TT.linenum++;
@@ -243,7 +247,7 @@ static int apply_one_hunk(void)
 		// Figure out which line of hunk to compare with next.  (Skip lines
 		// of the hunk we'd be adding.)
 		while (plist && *plist->data == "+-"[reverse]) {
-			if (data && strcmp(data, plist->data+1) == 0) {
+			if (data && !strcmp(data, plist->data+1)) {
 				if (!backwarn) {
 					backwarn = TT.linenum;
 					if (option_mask32 & FLAG_IGNORE) {
@@ -286,24 +290,12 @@ static int apply_one_hunk(void)
 		// out of buffer.
 
 		for (;;) {
-			while (plist && *plist->data == "+-"[reverse]) {
-				if (strcmp(check->data, plist->data+1) == 0
-				 && !backwarn
-				) {
-					backwarn = TT.linenum;
-					if (option_mask32 & FLAG_IGNORE) {
-						dummy_revert = 1;
-						reverse ^= 1;
-					}
-				}
-				plist = plist->next;
-			}
 			if (!plist || strcmp(check->data, plist->data+1)) {
 				// Match failed.  Write out first line of buffered data and
 				// recheck remaining buffered data for a new match.
 
 				if (PATCH_DEBUG)
-					fdprintf(2, "NOT: %s\n", plist ? plist->data : "EOF");
+					fdprintf(2, "NOT: %s\n", plist->data);
 
 				TT.state = 3;
 				check = buf;
@@ -353,8 +345,6 @@ done:
 // state 1: Found +++ file indicator, look for @@
 // state 2: In hunk: counting initial context lines
 // state 3: In hunk: getting body
-// Like GNU patch, we don't require a --- line before the +++, and
-// also allow the --- after the +++ line.
 
 int patch_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int patch_main(int argc UNUSED_PARAM, char **argv)
@@ -366,45 +356,9 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 	long oldlen = oldlen; /* for compiler */
 	long newlen = newlen; /* for compiler */
 
-#if ENABLE_LONG_OPTS
-	static const char patch_longopts[] ALIGN1 =
-		"reverse\0"               No_argument       "R"
-		"unified\0"               No_argument       "u"
-		"strip\0"                 Required_argument "p"
-		"input\0"                 Required_argument "i"
-		"forward\0"               No_argument       "N"
-# if ENABLE_DESKTOP
-		"remove-empty-files\0"    No_argument       "E" /*ignored*/
-		/* "debug"                Required_argument "x" */
-# endif
-		/* "Assume user knows what [s]he is doing, do not ask any questions": */
-		"force\0"                 No_argument       "f" /*ignored*/
-# if ENABLE_DESKTOP
-		/* "Controls actions when a file is under RCS or SCCS control,
-		 * and does not exist or is read-only and matches the default version,
-		 * or when a file is under ClearCase control and does not exist..."
-		 * IOW: rather obscure option.
-		 * But Gentoo's portage does use -g0
-		 */
-		"get\0"                   Required_argument "g" /*ignored*/
-# endif
-		"dry-run\0"               No_argument       "\xfd"
-# if ENABLE_DESKTOP
-		"backup-if-mismatch\0"    No_argument       "\xfe" /*ignored*/
-		"no-backup-if-mismatch\0" No_argument       "\xff" /*ignored*/
-# endif
-		;
-#endif
-
 	INIT_TT();
 
-#if ENABLE_LONG_OPTS
-	opts = getopt32long(argv, FLAG_STR, patch_longopts, &opt_p, &opt_i);
-#else
 	opts = getopt32(argv, FLAG_STR, &opt_p, &opt_i);
-#endif
-	//bb_error_msg_and_die("opts:%x", opts);
-
 	argv += optind;
 	reverse = opts & FLAG_REVERSE;
 	TT.prefix = (opts & FLAG_PATHLEN) ? xatoi(opt_p) : 0; // can be negative!
@@ -415,6 +369,10 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 		if (argv[0] && argv[1]) {
 			xmove_fd(xopen_stdin(argv[1]), STDIN_FILENO);
 		}
+	}
+	if (argv[0]) {
+		oldname = xstrdup(argv[0]);
+		newname = xstrdup(argv[0]);
 	}
 
 	// Loop through the lines in the patch
@@ -454,7 +412,7 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 		}
 
 		// Open a new file?
-		if (is_prefixed_with(patchline, "--- ") || is_prefixed_with(patchline, "+++ ")) {
+		if (!strncmp("--- ", patchline, 4) || !strncmp("+++ ", patchline, 4)) {
 			char *s, **name = reverse ? &newname : &oldname;
 			int i;
 
@@ -486,7 +444,7 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 
 		// Start a new hunk?  Usually @@ -oldline,oldlen +newline,newlen @@
 		// but a missing ,value means the value is 1.
-		} else if (state == 1 && is_prefixed_with(patchline, "@@ -")) {
+		} else if (state == 1 && !strncmp("@@ -", patchline, 4)) {
 			int i;
 			char *s = patchline+4;
 
@@ -504,14 +462,6 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 			TT.context = 0;
 			state = 2;
 
-			// If the --- line is missing or malformed, either oldname
-			// or (for -R) newname could be NULL -- but not both.  Like
-			// GNU patch, proceed based on the +++ line, and avoid SEGVs.
-			if (!oldname)
-				oldname = xstrdup("MISSING_FILENAME");
-			if (!newname)
-				newname = xstrdup("MISSING_FILENAME");
-
 			// If this is the first hunk, open the file.
 			if (TT.filein == -1) {
 				int oldsum, newsum, empty = 0;
@@ -524,12 +474,12 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 
 				// We're deleting oldname if new file is /dev/null (before -p)
 				// or if new hunk is empty (zero context) after patching
-				if (strcmp(name, "/dev/null") == 0 || !(reverse ? oldsum : newsum)) {
+				if (!strcmp(name, "/dev/null") || !(reverse ? oldsum : newsum)) {
 					name = reverse ? newname : oldname;
-					empty = 1;
+					empty++;
 				}
 
-				// Handle -p path truncation.
+				// handle -p path truncation.
 				for (i = 0, s = name; *s;) {
 					if ((option_mask32 & FLAG_PATHLEN) && TT.prefix == i)
 						break;
@@ -540,9 +490,6 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 					i++;
 					name = s;
 				}
-				// If "patch FILE_TO_PATCH", completely ignore name from patch
-				if (argv[0])
-					name = argv[0];
 
 				if (empty) {
 					// File is empty after the patches have been applied
@@ -550,46 +497,36 @@ int patch_main(int argc UNUSED_PARAM, char **argv)
 					if (option_mask32 & FLAG_RMEMPTY) {
 						// If flag -E or --remove-empty-files is set
 						printf("removing %s\n", name);
-						if (!(opts & FLAG_dry_run))
-							xunlink(name);
+						xunlink(name);
 					} else {
 						printf("patching file %s\n", name);
-						if (!(opts & FLAG_dry_run))
-							xclose(xopen(name, O_WRONLY | O_TRUNC));
+						xclose(xopen(name, O_WRONLY | O_TRUNC));
 					}
 				// If we've got a file to open, do so.
 				} else if (!(option_mask32 & FLAG_PATHLEN) || i <= TT.prefix) {
 					struct stat statbuf;
 
 					// If the old file was null, we're creating a new one.
-					if (strcmp(oldname, "/dev/null") == 0 || !oldsum) {
+					if (!strcmp(oldname, "/dev/null") || !oldsum) {
 						printf("creating %s\n", name);
-						if (!(opts & FLAG_dry_run)) {
-							s = strrchr(name, '/');
-							if (s) {
-								*s = '\0';
-								bb_make_directory(name, -1, FILEUTILS_RECUR);
-								*s = '/';
-							}
-							TT.filein = xopen(name, O_CREAT|O_EXCL|O_RDWR);
-						} else {
-							TT.filein = xopen("/dev/null", O_RDONLY);
+						s = strrchr(name, '/');
+						if (s) {
+							*s = 0;
+							bb_make_directory(name, -1, FILEUTILS_RECUR);
+							*s = '/';
 						}
+						TT.filein = xopen(name, O_CREAT|O_EXCL|O_RDWR);
 					} else {
 						printf("patching file %s\n", name);
 						TT.filein = xopen(name, O_RDONLY);
 					}
 
-					if (!(opts & FLAG_dry_run)) {
-						TT.tempname = xasprintf("%sXXXXXX", name);
-						TT.fileout = xmkstemp(TT.tempname);
-						// Set permissions of output file
-						fstat(TT.filein, &statbuf);
-						fchmod(TT.fileout, statbuf.st_mode);
-					} else {
-						TT.tempname = (char*)"";
-						TT.fileout = xopen("/dev/null", O_WRONLY);
-					}
+					TT.tempname = xasprintf("%sXXXXXX", name);
+					TT.fileout = xmkstemp(TT.tempname);
+					// Set permissions of output file
+					fstat(TT.filein, &statbuf);
+					fchmod(TT.fileout, statbuf.st_mode);
+
 					TT.linenum = 0;
 					TT.hunknum = 0;
 				}

@@ -6,17 +6,6 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
-//config:config FUSER
-//config:	bool "fuser (7 kb)"
-//config:	default y
-//config:	help
-//config:	fuser lists all PIDs (Process IDs) that currently have a given
-//config:	file open. fuser can also list all PIDs that have a given network
-//config:	(TCP or UDP) port open.
-
-//applet:IF_FUSER(APPLET(fuser, BB_DIR_USR_BIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_FUSER) += fuser.o
 
 //usage:#define fuser_trivial_usage
 //usage:       "[OPTIONS] FILE or PORT/PROTO"
@@ -29,7 +18,6 @@
 //usage:     "\n	-SIGNAL	Signal to send (default: KILL)"
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 
 #define MAX_LINE 255
 
@@ -55,9 +43,8 @@ struct globals {
 	smallint kill_failed;
 	int killsig;
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
+#define G (*(struct globals*)&bb_common_bufsiz1)
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	G.mypid = getpid(); \
 	G.killsig = SIGKILL; \
 } while (0)
@@ -299,7 +286,8 @@ int fuser_main(int argc UNUSED_PARAM, char **argv)
 		break;
 	}
 
-	getopt32(argv, "^" OPTION_STRING "\0" "-1"/*at least one arg*/);
+	opt_complementary = "-1"; /* at least one param */
+	getopt32(argv, OPTION_STRING);
 	argv += optind;
 
 	pp = argv;

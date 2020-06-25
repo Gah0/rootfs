@@ -2,6 +2,7 @@
 /*
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 #include "bb_archive.h"
 
@@ -37,7 +38,7 @@ static const char *const tar_var[] = {
 static void xputenv(char *str)
 {
 	if (putenv(str))
-		bb_die_memory_exhausted();
+		bb_error_msg_and_die(bb_msg_memory_exhausted);
 }
 
 static void str2env(char *env[], int idx, const char *str)
@@ -111,12 +112,13 @@ void FAST_FUNC data_extract_to_command(archive_handle_t *archive_handle)
 		bb_copyfd_exact_size(archive_handle->src_fd, p[1], -file_header->size);
 		close(p[1]);
 
-		status = wait_for_exitstatus(pid);
+		if (safe_waitpid(pid, &status, 0) == -1)
+			bb_perror_msg_and_die("waitpid");
 		if (WIFEXITED(status) && WEXITSTATUS(status))
 			bb_error_msg_and_die("'%s' returned status %d",
 				archive_handle->tar__to_command, WEXITSTATUS(status));
 		if (WIFSIGNALED(status))
-			bb_error_msg_and_die("'%s' terminated by signal %d",
+			bb_error_msg_and_die("'%s' terminated on signal %d",
 				archive_handle->tar__to_command, WTERMSIG(status));
 
 		if (!BB_MMU) {

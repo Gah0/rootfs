@@ -45,20 +45,20 @@
  * which detects EAGAIN and uses poll() to wait on the fd.
  * Thankfully, poll() doesn't care about O_NONBLOCK flag.
  */
-ssize_t FAST_FUNC nonblock_immune_read(int fd, void *buf, size_t count)
+ssize_t FAST_FUNC nonblock_immune_read(int fd, void *buf, size_t count, int loop_on_EINTR)
 {
 	struct pollfd pfd[1];
 	ssize_t n;
 
 	while (1) {
-		n = safe_read(fd, buf, count);
+		n = loop_on_EINTR ? safe_read(fd, buf, count) : read(fd, buf, count);
 		if (n >= 0 || errno != EAGAIN)
 			return n;
 		/* fd is in O_NONBLOCK mode. Wait using poll and repeat */
 		pfd[0].fd = fd;
 		pfd[0].events = POLLIN;
 		/* note: safe_poll pulls in printf */
-		safe_poll(pfd, 1, -1);
+		loop_on_EINTR ? safe_poll(pfd, 1, -1) : poll(pfd, 1, -1);
 	}
 }
 
@@ -81,7 +81,7 @@ char* FAST_FUNC xmalloc_reads(int fd, size_t *maxsz_p)
 			p = buf + sz;
 			sz += 128;
 		}
-		if (nonblock_immune_read(fd, p, 1) != 1) {
+		if (nonblock_immune_read(fd, p, 1, /*loop_on_EINTR:*/ 1) != 1) {
 			/* EOF/error */
 			if (p == buf) { /* we read nothing */
 				free(buf);
@@ -102,9 +102,10 @@ char* FAST_FUNC xmalloc_reads(int fd, size_t *maxsz_p)
 
 // Read (potentially big) files in one go. File size is estimated
 // by stat. Extra '\0' byte is appended.
-void* FAST_FUNC xmalloc_read_with_initial_buf(int fd, size_t *maxsz_p, char *buf, size_t total)
+void* FAST_FUNC xmalloc_read(int fd, size_t *maxsz_p)
 {
-	size_t size, rd_size;
+	char *buf;
+	size_t size, rd_size, total;
 	size_t to_read;
 	struct stat st;
 
@@ -117,6 +118,8 @@ void* FAST_FUNC xmalloc_read_with_initial_buf(int fd, size_t *maxsz_p, char *buf
 	/* In order to make such files readable, we add small const */
 	size = (st.st_size | 0x3ff) + 1;
 
+	total = 0;
+	buf = NULL;
 	while (1) {
 		if (to_read < size)
 			size = to_read;
@@ -143,11 +146,6 @@ void* FAST_FUNC xmalloc_read_with_initial_buf(int fd, size_t *maxsz_p, char *buf
 	if (maxsz_p)
 		*maxsz_p = total;
 	return buf;
-}
-
-void* FAST_FUNC xmalloc_read(int fd, size_t *maxsz_p)
-{
-	return xmalloc_read_with_initial_buf(fd, maxsz_p, NULL, 0);
 }
 
 #ifdef USING_LSEEK_TO_GET_SIZE
@@ -217,7 +215,7 @@ void FAST_FUNC xread(int fd, void *buf, size_t count)
 	if (count) {
 		ssize_t size = full_read(fd, buf, count);
 		if ((size_t)size != count)
-			bb_simple_error_msg_and_die("short read");
+			bb_error_msg_and_die("short read");
 	}
 }
 

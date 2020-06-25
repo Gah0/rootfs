@@ -9,14 +9,13 @@
  * Public License
  */
 //config:config FATATTR
-//config:	bool "fatattr (1.9 kb)"
+//config:	bool "fatattr"
 //config:	default y
 //config:	select PLATFORM_LINUX
 //config:	help
-//config:	fatattr lists or changes the file attributes on a fat file system.
+//config:	  fatattr lists or changes the file attributes on a fat file system.
 
-//applet:IF_FATATTR(APPLET_NOEXEC(fatattr, fatattr, BB_DIR_BIN, BB_SUID_DROP, fatattr))
-
+//applet:IF_FATATTR(APPLET(fatattr, BB_DIR_BIN, BB_SUID_DROP))
 //kbuild:lib-$(CONFIG_FATATTR) += fatattr.o
 
 //usage:#define fatattr_trivial_usage
@@ -43,7 +42,7 @@
  * Extra space at the end is a hack to print space separator in file listing.
  * Let's hope no one ever passes space as an option char :)
  */
-static const char bit_to_char[] ALIGN1 = "rhsvda67 ";
+static const char bit_to_char[] = "rhsvda67 ";
 
 static inline unsigned long get_flag(char c)
 {

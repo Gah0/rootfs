@@ -1,60 +1,47 @@
 /* vi: set sw=4 ts=4: */
-/*
- * nc: mini-netcat - built from the ground up for LRP
+/* nc: mini-netcat - built from the ground up for LRP
  *
  * Copyright (C) 1998, 1999  Charles P. Wright
  * Copyright (C) 1998  Dave Cinege
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
+#include "libbb.h"
+
 //config:config NC
-//config:	bool "nc (11 kb)"
+//config:	bool "nc"
 //config:	default y
 //config:	help
-//config:	A simple Unix utility which reads and writes data across network
-//config:	connections.
-//config:
-//config:config NETCAT
-//config:	bool "netcat (11 kb)"
-//config:	default n
-//config:	help
-//config:	Alias to nc.
+//config:	  A simple Unix utility which reads and writes data across network
+//config:	  connections.
 //config:
 //config:config NC_SERVER
 //config:	bool "Netcat server options (-l)"
 //config:	default y
-//config:	depends on NC || NETCAT
+//config:	depends on NC
 //config:	help
-//config:	Allow netcat to act as a server.
+//config:	  Allow netcat to act as a server.
 //config:
 //config:config NC_EXTRA
 //config:	bool "Netcat extensions (-eiw and -f FILE)"
 //config:	default y
-//config:	depends on NC || NETCAT
+//config:	depends on NC
 //config:	help
-//config:	Add -e (support for executing the rest of the command line after
-//config:	making or receiving a successful connection), -i (delay interval for
-//config:	lines sent), -w (timeout for initial connection).
+//config:	  Add -e (support for executing the rest of the command line after
+//config:	  making or receiving a successful connection), -i (delay interval for
+//config:	  lines sent), -w (timeout for initial connection).
 //config:
 //config:config NC_110_COMPAT
 //config:	bool "Netcat 1.10 compatibility (+2.5k)"
-//config:	default y
-//config:	depends on NC || NETCAT
+//config:	default n  # off specially for Rob
+//config:	depends on NC
 //config:	help
-//config:	This option makes nc closely follow original nc-1.10.
-//config:	The code is about 2.5k bigger. It enables
-//config:	-s ADDR, -n, -u, -v, -o FILE, -z options, but loses
-//config:	busybox-specific extensions: -f FILE.
+//config:	  This option makes nc closely follow original nc-1.10.
+//config:	  The code is about 2.5k bigger. It enables
+//config:	  -s ADDR, -n, -u, -v, -o FILE, -z options, but loses
+//config:	  busybox-specific extensions: -f FILE.
 
-//applet:IF_NC(APPLET(nc, BB_DIR_USR_BIN, BB_SUID_DROP))
-//                 APPLET_ODDNAME:name    main location        suid_type     help
-//applet:IF_NETCAT(APPLET_ODDNAME(netcat, nc,  BB_DIR_USR_BIN, BB_SUID_DROP, nc))
-
-//kbuild:lib-$(CONFIG_NC) += nc.o
-//kbuild:lib-$(CONFIG_NETCAT) += nc.o
-
-#include "libbb.h"
-#include "common_bufsiz.h"
 #if ENABLE_NC_110_COMPAT
 # include "nc_bloaty.c"
 #else
@@ -112,7 +99,7 @@
 
 static void timeout(int signum UNUSED_PARAM)
 {
-	bb_simple_error_msg_and_die("timed out");
+	bb_error_msg_and_die("timed out");
 }
 
 int nc_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
@@ -127,7 +114,7 @@ int nc_main(int argc, char **argv)
 	IF_NOT_NC_EXTRA (const) unsigned delay = 0;
 	IF_NOT_NC_EXTRA (const int execparam = 0;)
 	IF_NC_EXTRA     (char **execparam = NULL;)
-	struct pollfd pfds[2];
+	fd_set readfds, testfds;
 	int opt; /* must be signed (getopt returns -1) */
 
 	if (ENABLE_NC_SERVER || ENABLE_NC_EXTRA) {
@@ -211,7 +198,7 @@ int nc_main(int argc, char **argv)
  accept_again:
 			cfd = accept(sfd, NULL, 0);
 			if (cfd < 0)
-				bb_simple_perror_msg_and_die("accept");
+				bb_perror_msg_and_die("accept");
 			if (!execparam)
 				close(sfd);
 		} else {
@@ -245,28 +232,28 @@ int nc_main(int argc, char **argv)
 		IF_NC_EXTRA(bb_perror_msg_and_die("can't execute '%s'", execparam[0]);)
 	}
 
-	/* loop copying stdin to cfd, and cfd to stdout */
+	/* Select loop copying stdin to cfd, and cfd to stdout */
 
-	pfds[0].fd = STDIN_FILENO;
-	pfds[0].events = POLLIN;
-	pfds[1].fd = cfd;
-	pfds[1].events = POLLIN;
+	FD_ZERO(&readfds);
+	FD_SET(cfd, &readfds);
+	FD_SET(STDIN_FILENO, &readfds);
 
-#define iobuf bb_common_bufsiz1
-	setup_common_bufsiz();
 	for (;;) {
-		int fdidx;
+		int fd;
 		int ofd;
 		int nread;
 
-		if (safe_poll(pfds, 2, -1) < 0)
-			bb_simple_perror_msg_and_die("poll");
+		testfds = readfds;
 
-		fdidx = 0;
+		if (select(cfd + 1, &testfds, NULL, NULL, NULL) < 0)
+			bb_perror_msg_and_die("select");
+
+#define iobuf bb_common_bufsiz1
+		fd = STDIN_FILENO;
 		while (1) {
-			if (pfds[fdidx].revents) {
-				nread = safe_read(pfds[fdidx].fd, iobuf, COMMON_BUFSIZE);
-				if (fdidx != 0) {
+			if (FD_ISSET(fd, &testfds)) {
+				nread = safe_read(fd, iobuf, sizeof(iobuf));
+				if (fd == cfd) {
 					if (nread < 1)
 						exit(EXIT_SUCCESS);
 					ofd = STDOUT_FILENO;
@@ -275,7 +262,7 @@ int nc_main(int argc, char **argv)
 						/* Close outgoing half-connection so they get EOF,
 						 * but leave incoming alone so we can see response */
 						shutdown(cfd, SHUT_WR);
-						pfds[0].fd = -1;
+						FD_CLR(STDIN_FILENO, &readfds);
 					}
 					ofd = cfd;
 				}
@@ -283,9 +270,9 @@ int nc_main(int argc, char **argv)
 				if (delay > 0)
 					sleep(delay);
 			}
-			if (fdidx == 1)
+			if (fd == cfd)
 				break;
-			fdidx++;
+			fd = cfd;
 		}
 	}
 }

@@ -437,7 +437,7 @@ void FAST_FUNC md5_hash(const void *buffer, size_t inputLen, md5_ctx_t *context)
  * MD5 finalization. Ends an MD5 message-digest operation,
  * writing the message digest.
  */
-unsigned FAST_FUNC md5_end(void *digest, md5_ctx_t *context)
+void FAST_FUNC md5_end(void *digest, md5_ctx_t *context)
 {
 	unsigned idx, padLen;
 	unsigned char bits[8];
@@ -457,5 +457,4 @@ unsigned FAST_FUNC md5_end(void *digest, md5_ctx_t *context)
 
 	/* Store state in digest */
 	memcpy32_cpu2le(digest, context->state, 16);
-	return 16;
 }

@@ -12,6 +12,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 /*
  * The following code uses an algorithm due to Harold Stone,
  * which finds a pair of longest identical subsequences in
@@ -74,30 +75,33 @@
  * 3*(number of k-candidates installed), typically about
  * 6n words for files of length n.
  */
+
 //config:config DIFF
-//config:	bool "diff (13 kb)"
+//config:	bool "diff"
 //config:	default y
 //config:	help
-//config:	diff compares two files or directories and outputs the
-//config:	differences between them in a form that can be given to
-//config:	the patch command.
+//config:	  diff compares two files or directories and outputs the
+//config:	  differences between them in a form that can be given to
+//config:	  the patch command.
 //config:
 //config:config FEATURE_DIFF_LONG_OPTIONS
 //config:	bool "Enable long options"
 //config:	default y
 //config:	depends on DIFF && LONG_OPTS
+//config:	help
+//config:	  Enable use of long options.
 //config:
 //config:config FEATURE_DIFF_DIR
 //config:	bool "Enable directory support"
 //config:	default y
 //config:	depends on DIFF
 //config:	help
-//config:	This option enables support for directory and subdirectory
-//config:	comparison.
-
-//applet:IF_DIFF(APPLET(diff, BB_DIR_USR_BIN, BB_SUID_DROP))
+//config:	  This option enables support for directory and subdirectory
+//config:	  comparison.
 
 //kbuild:lib-$(CONFIG_DIFF) += diff.o
+
+//applet:IF_DIFF(APPLET(diff, BB_DIR_USR_BIN, BB_SUID_DROP))
 
 //usage:#define diff_trivial_usage
 //usage:       "[-abBdiNqrTstw] [-L LABEL] [-S FILE] [-U LINES] FILE1 FILE2"
@@ -121,7 +125,6 @@
 //usage:     "\n	-w	Ignore all whitespace"
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 
 #if 0
 # define dbg_error_msg(...) bb_error_msg(__VA_ARGS__)
@@ -293,6 +296,17 @@ static int search(const int *c, int k, int y, const struct cand *list)
 	}
 }
 
+static unsigned isqrt(unsigned n)
+{
+	unsigned x = 1;
+	while (1) {
+		const unsigned y = x;
+		x = ((n / x) + x) >> 1;
+		if (x <= (y + 1) && x >= (y - 1))
+			return x;
+	}
+}
+
 static void stone(const int *a, int n, const int *b, int *J, int pref)
 {
 	const unsigned isq = isqrt(n);
@@ -349,7 +363,7 @@ static void stone(const int *a, int n, const int *b, int *J, int pref)
 }
 
 struct line {
-	/* 'serial' is not used in the beginning, so we reuse it
+	/* 'serial' is not used in the begining, so we reuse it
 	 * to store line offsets, thus reducing memory pressure
 	 */
 	union {
@@ -419,7 +433,7 @@ static void fetch(FILE_and_pos_t *ft, const off_t *ix, int a, int b, int ch)
 		for (j = 0, col = 0; j < ix[i] - ix[i - 1]; j++) {
 			int c = fgetc(ft->ft_fp);
 			if (c == EOF) {
-				puts("\n\\ No newline at end of file");
+				printf("\n\\ No newline at end of file\n");
 				return;
 			}
 			ft->ft_pos++;
@@ -644,8 +658,8 @@ static bool diff(FILE* fp[2], char *file[2])
 				}
 
 				for (j = 0; j < 2; j++)
-					for (k = v[j].a; k <= v[j].b; k++)
-						nonempty |= (ix[j][k] - ix[j][k - 1] != 1);
+					for (k = v[j].a; k < v[j].b; k++)
+						nonempty |= (ix[j][k+1] - ix[j][k] != 1);
 
 				vec = xrealloc_vector(vec, 6, ++idx);
 				memcpy(vec[idx], v, sizeof(v));
@@ -678,7 +692,7 @@ static bool diff(FILE* fp[2], char *file[2])
 					continue;
 				printf(",%d", (a < b) ? b - a + 1 : 0);
 			}
-			puts(" @@");
+			printf(" @@\n");
 			/*
 			 * Output changes in "unified" diff format--the old and new lines
 			 * are printed together.
@@ -713,19 +727,9 @@ static int diffreg(char *file[2])
 	fp[0] = stdin;
 	fp[1] = stdin;
 	for (i = 0; i < 2; i++) {
-		int fd = STDIN_FILENO;
-		if (!LONE_DASH(file[i])) {
-			if (!(option_mask32 & FLAG(N))) {
-				fd = open_or_warn(file[i], O_RDONLY);
-				if (fd == -1)
-					goto out;
-			} else {
-				/* -N: if some file does not exist compare it like empty */
-				fd = open(file[i], O_RDONLY);
-				if (fd == -1)
-					fd = xopen("/dev/null", O_RDONLY);
-			}
-		}
+		int fd = open_or_warn_stdin(file[i]);
+		if (fd == -1)
+			goto out;
 		/* Our diff implementation is using seek.
 		 * When we meet non-seekable file, we must make a temp copy.
 		 */
@@ -736,15 +740,13 @@ static int diffreg(char *file[2])
 			unlink(name);
 			if (bb_copyfd_eof(fd, fd_tmp) < 0)
 				xfunc_die();
-			if (fd != STDIN_FILENO)
+			if (fd) /* Prevents closing of stdin */
 				close(fd);
 			fd = fd_tmp;
-			xlseek(fd, 0, SEEK_SET);
 		}
 		fp[i] = fdopen(fd, "r");
 	}
 
-	setup_common_bufsiz();
 	while (1) {
 		const size_t sz = COMMON_BUFSIZE / 2;
 		char *const buf0 = bb_common_bufsiz1;
@@ -965,11 +967,6 @@ static const char diff_longopts[] ALIGN1 =
 	"starting-file\0"            Required_argument "S"
 	"minimal\0"                  No_argument       "d"
 	;
-# define GETOPT32 getopt32long
-# define LONGOPTS ,diff_longopts
-#else
-# define GETOPT32 getopt32
-# define LONGOPTS
 #endif
 
 int diff_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
@@ -982,31 +979,28 @@ int diff_main(int argc UNUSED_PARAM, char **argv)
 	INIT_G();
 
 	/* exactly 2 params; collect multiple -L <label>; -U N */
-	GETOPT32(argv, "^" "abdiL:*NqrsS:tTU:+wupBE" "\0" "=2"
-			LONGOPTS,
+	opt_complementary = "=2:L::U+";
+#if ENABLE_FEATURE_DIFF_LONG_OPTIONS
+	applet_long_options = diff_longopts;
+#endif
+	getopt32(argv, "abdiL:NqrsS:tTU:wupBE",
 			&L_arg, &s_start, &opt_U_context);
 	argv += optind;
 	while (L_arg)
 		label[!!label[0]] = llist_pop(&L_arg);
-
-	/* Compat: "diff file name_which_doesnt_exist" exits with 2 */
 	xfunc_error_retval = 2;
 	for (i = 0; i < 2; i++) {
 		file[i] = argv[i];
+		/* Compat: "diff file name_which_doesnt_exist" exits with 2 */
 		if (LONE_DASH(file[i])) {
 			fstat(STDIN_FILENO, &stb[i]);
 			gotstdin++;
-		} else if (option_mask32 & FLAG(N)) {
-			if (stat(file[i], &stb[i]))
-				xstat("/dev/null", &stb[i]);
-		} else {
+		} else
 			xstat(file[i], &stb[i]);
-		}
 	}
 	xfunc_error_retval = 1;
-
 	if (gotstdin && (S_ISDIR(stb[0].st_mode) || S_ISDIR(stb[1].st_mode)))
-		bb_simple_error_msg_and_die("can't compare stdin to a directory");
+		bb_error_msg_and_die("can't compare stdin to a directory");
 
 	/* Compare metadata to check if the files are the same physical file.
 	 *
@@ -1037,7 +1031,7 @@ int diff_main(int argc UNUSED_PARAM, char **argv)
 #if ENABLE_FEATURE_DIFF_DIR
 		diffdir(file, s_start);
 #else
-		bb_simple_error_msg_and_die("no support for directory comparison");
+		bb_error_msg_and_die("no support for directory comparison");
 #endif
 	} else {
 		bool dirfile = S_ISDIR(stb[0].st_mode) || S_ISDIR(stb[1].st_mode);

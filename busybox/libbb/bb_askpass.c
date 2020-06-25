@@ -1,11 +1,13 @@
 /* vi: set sw=4 ts=4: */
 /*
  * Ask for a password
+ * I use a static buffer in this function.  Plan accordingly.
  *
  * Copyright (C) 1999-2004 by Erik Andersen <andersen@codepoet.org>
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 /* do nothing signal handler */
@@ -13,9 +15,16 @@ static void askpass_timeout(int UNUSED_PARAM ignore)
 {
 }
 
-char* FAST_FUNC bb_ask_noecho(int fd, int timeout, const char *prompt)
+char* FAST_FUNC bb_ask_stdin(const char *prompt)
 {
-#define MAX_LINE 0xfff
+	return bb_ask(STDIN_FILENO, 0, prompt);
+}
+char* FAST_FUNC bb_ask(const int fd, int timeout, const char *prompt)
+{
+	/* Was static char[BIGNUM] */
+	enum { sizeof_passwd = 128 };
+	static char *passwd;
+
 	char *ret;
 	int i;
 	struct sigaction sa, oldsa;
@@ -30,17 +39,16 @@ char* FAST_FUNC bb_ask_noecho(int fd, int timeout, const char *prompt)
 
 	tcgetattr(fd, &oldtio);
 	tio = oldtio;
-	/* Switch off echo. ECHOxyz meaning:
-	 * ECHO    echo input chars
-	 * ECHOE   echo BS-SP-BS on erase character
-	 * ECHOK   echo kill char specially, not as ^c (ECHOKE controls how exactly)
-	 * ECHOKE  erase all input via BS-SP-BS on kill char (else go to next line)
-	 * ECHOCTL Echo ctrl chars as ^c (else echo verbatim:
-	 *         e.g. up arrow emits "ESC-something" and thus moves cursor up!)
-	 * ECHONL  Echo NL even if ECHO is not set
-	 * ECHOPRT On erase, echo erased chars
-	 *         [qwe<BS><BS><BS> input looks like "qwe\ewq/" on screen]
+#if 0
+	/* Switch off UPPERCASE->lowercase conversion (never used since 198x)
+	 * and XON/XOFF (why we want to mess with this??)
 	 */
+# ifndef IUCLC
+#  define IUCLC 0
+# endif
+	tio.c_iflag &= ~(IUCLC|IXON|IXOFF|IXANY);
+#endif
+	/* Switch off echo */
 	tio.c_lflag &= ~(ECHO|ECHOE|ECHOK|ECHONL);
 	tcsetattr(fd, TCSANOW, &tio);
 
@@ -54,30 +62,22 @@ char* FAST_FUNC bb_ask_noecho(int fd, int timeout, const char *prompt)
 		alarm(timeout);
 	}
 
-	ret = NULL;
+	if (!passwd)
+		passwd = xmalloc(sizeof_passwd);
+	ret = passwd;
 	i = 0;
 	while (1) {
-		int r;
-
-		/* User input is uber-slow, no need to optimize reallocs.
-		 * Grow it on every char.
-		 */
-		ret = xrealloc(ret, i + 2);
-		r = read(fd, &ret[i], 1);
-
+		int r = read(fd, &ret[i], 1);
 		if ((i == 0 && r == 0) /* EOF (^D) with no password */
-		 || r < 0 /* read is interrupted by timeout or ^C */
+		 || r < 0
 		) {
-			ret[i] = '\0'; /* paranoia */
-			nuke_str(ret); /* paranoia */
-			free(ret);
+			/* read is interrupted by timeout or ^C */
 			ret = NULL;
 			break;
 		}
-
 		if (r == 0 /* EOF */
 		 || ret[i] == '\r' || ret[i] == '\n' /* EOL */
-		 || ++i == MAX_LINE /* line limit */
+		 || ++i == sizeof_passwd-1 /* line limit */
 		) {
 			ret[i] = '\0';
 			break;
@@ -92,8 +92,4 @@ char* FAST_FUNC bb_ask_noecho(int fd, int timeout, const char *prompt)
 	bb_putchar('\n');
 	fflush_all();
 	return ret;
-}
-char* FAST_FUNC bb_ask_noecho_stdin(const char *prompt)
-{
-	return bb_ask_noecho(STDIN_FILENO, 0, prompt);
 }

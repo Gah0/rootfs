@@ -63,12 +63,14 @@
 
 PUSH_AND_SET_FUNCTION_VISIBILITY_TO_HIDDEN
 
-#if ENABLE_FEATURE_SH_MATH_64
+#if ENABLE_SH_MATH_SUPPORT_64
 typedef long long arith_t;
-# define ARITH_FMT "%lld"
+#define ARITH_FMT "%lld"
+#define strto_arith_t strtoull
 #else
 typedef long arith_t;
-# define ARITH_FMT "%ld"
+#define ARITH_FMT "%ld"
+#define strto_arith_t strtoul
 #endif
 
 typedef const char* FAST_FUNC (*arith_var_lookup_t)(const char *name);

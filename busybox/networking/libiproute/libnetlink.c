@@ -7,6 +7,7 @@
  *
  * Authors: Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  */
+
 #include <sys/socket.h>
 #include <sys/uio.h>
 
@@ -15,13 +16,16 @@
 
 void FAST_FUNC xrtnl_open(struct rtnl_handle *rth/*, unsigned subscriptions*/)
 {
+	socklen_t addr_len;
+
 	memset(rth, 0, sizeof(*rth));
 	rth->fd = xsocket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
 	rth->local.nl_family = AF_NETLINK;
 	/*rth->local.nl_groups = subscriptions;*/
 
 	xbind(rth->fd, (struct sockaddr*)&rth->local, sizeof(rth->local));
-	bb_getsockname(rth->fd, (struct sockaddr*)&rth->local, sizeof(rth->local));
+	addr_len = sizeof(rth->local);
+	getsockname(rth->fd, (struct sockaddr*)&rth->local, &addr_len);
 
 /* too much paranoia
 	if (getsockname(rth->fd, (struct sockaddr*)&rth->local, &addr_len) < 0)
@@ -34,7 +38,7 @@ void FAST_FUNC xrtnl_open(struct rtnl_handle *rth/*, unsigned subscriptions*/)
 	rth->seq = time(NULL);
 }
 
-void FAST_FUNC xrtnl_wilddump_request(struct rtnl_handle *rth, int family, int type)
+int FAST_FUNC xrtnl_wilddump_request(struct rtnl_handle *rth, int family, int type)
 {
 	struct {
 		struct nlmsghdr nlh;
@@ -48,75 +52,42 @@ void FAST_FUNC xrtnl_wilddump_request(struct rtnl_handle *rth, int family, int t
 	req.nlh.nlmsg_seq = rth->dump = ++rth->seq;
 	req.g.rtgen_family = family;
 
-	rtnl_send(rth, (void*)&req, sizeof(req));
+	return rtnl_send(rth, (void*)&req, sizeof(req));
 }
 
-/* A version which checks for e.g. EPERM errors.
- * Try: setuidgid 1:1 ip addr flush dev eth0
- */
-int FAST_FUNC rtnl_send_check(struct rtnl_handle *rth, const void *buf, int len)
+//TODO: pass rth->fd instead of full rth?
+int FAST_FUNC rtnl_send(struct rtnl_handle *rth, char *buf, int len)
 {
-	struct nlmsghdr *h;
-	int status;
-	char resp[1024];
+	struct sockaddr_nl nladdr;
 
-	status = write(rth->fd, buf, len);
-	if (status < 0)
-		return status;
+	memset(&nladdr, 0, sizeof(nladdr));
+	nladdr.nl_family = AF_NETLINK;
 
-	/* Check for immediate errors */
-	status = recv(rth->fd, resp, sizeof(resp), MSG_DONTWAIT|MSG_PEEK);
-	if (status < 0) {
-		if (errno == EAGAIN) /* if no error, this happens */
-			return 0;
-		return -1;
-	}
-
-	for (h = (struct nlmsghdr *)resp;
-	    NLMSG_OK(h, status);
-	    h = NLMSG_NEXT(h, status)
-	) {
-		if (h->nlmsg_type == NLMSG_ERROR) {
-			struct nlmsgerr *err = (struct nlmsgerr*)NLMSG_DATA(h);
-			if (h->nlmsg_len < NLMSG_LENGTH(sizeof(struct nlmsgerr)))
-				bb_simple_error_msg("ERROR truncated");
-			else
-				errno = -err->error;
-			return -1;
-		}
-	}
-
-	return 0;
+	return xsendto(rth->fd, buf, len, (struct sockaddr*)&nladdr, sizeof(nladdr));
 }
 
 int FAST_FUNC rtnl_dump_request(struct rtnl_handle *rth, int type, void *req, int len)
 {
-	struct {
-		struct nlmsghdr nlh;
-		struct msghdr msg;
-		struct sockaddr_nl nladdr;
-	} s;
-	struct iovec iov[2] = { { &s.nlh, sizeof(s.nlh) }, { req, len } };
+	struct nlmsghdr nlh;
+	struct sockaddr_nl nladdr;
+	struct iovec iov[2] = { { &nlh, sizeof(nlh) }, { req, len } };
+	struct msghdr msg = {
+		(void*)&nladdr, sizeof(nladdr),
+		iov,  2,
+		NULL, 0,
+		0
+	};
 
-	memset(&s, 0, sizeof(s));
+	memset(&nladdr, 0, sizeof(nladdr));
+	nladdr.nl_family = AF_NETLINK;
 
-	s.msg.msg_name = (void*)&s.nladdr;
-	s.msg.msg_namelen = sizeof(s.nladdr);
-	s.msg.msg_iov = iov;
-	s.msg.msg_iovlen = 2;
-	/*s.msg.msg_control = NULL; - already is */
-	/*s.msg.msg_controllen = 0; - already is */
-	/*s.msg.msg_flags = 0; - already is */
+	nlh.nlmsg_len = NLMSG_LENGTH(len);
+	nlh.nlmsg_type = type;
+	nlh.nlmsg_flags = NLM_F_ROOT|NLM_F_MATCH|NLM_F_REQUEST;
+	nlh.nlmsg_pid = 0;
+	nlh.nlmsg_seq = rth->dump = ++rth->seq;
 
-	s.nladdr.nl_family = AF_NETLINK;
-
-	s.nlh.nlmsg_len = NLMSG_LENGTH(len);
-	s.nlh.nlmsg_type = type;
-	s.nlh.nlmsg_flags = NLM_F_ROOT|NLM_F_MATCH|NLM_F_REQUEST;
-	/*s.nlh.nlmsg_pid = 0; - already is */
-	s.nlh.nlmsg_seq = rth->dump = ++rth->seq;
-
-	return sendmsg(rth->fd, &s.msg, 0);
+	return sendmsg(rth->fd, &msg, 0);
 }
 
 static int rtnl_dump_filter(struct rtnl_handle *rth,
@@ -133,15 +104,12 @@ static int rtnl_dump_filter(struct rtnl_handle *rth,
 	while (1) {
 		int status;
 		struct nlmsghdr *h;
-		/* Use designated initializers, struct layout is non-portable */
+
 		struct msghdr msg = {
-			.msg_name = (void*)&nladdr,
-			.msg_namelen = sizeof(nladdr),
-			.msg_iov = &iov,
-			.msg_iovlen = 1,
-			.msg_control = NULL,
-			.msg_controllen = 0,
-			.msg_flags = 0
+			(void*)&nladdr, sizeof(nladdr),
+			&iov, 1,
+			NULL, 0,
+			0
 		};
 
 		status = recvmsg(rth->fd, &msg, 0);
@@ -149,11 +117,11 @@ static int rtnl_dump_filter(struct rtnl_handle *rth,
 		if (status < 0) {
 			if (errno == EINTR)
 				continue;
-			bb_simple_perror_msg("OVERRUN");
+			bb_perror_msg("OVERRUN");
 			continue;
 		}
 		if (status == 0) {
-			bb_simple_error_msg("EOF on netlink");
+			bb_error_msg("EOF on netlink");
 			goto ret;
 		}
 		if (msg.msg_namelen != sizeof(nladdr)) {
@@ -184,10 +152,10 @@ static int rtnl_dump_filter(struct rtnl_handle *rth,
 			if (h->nlmsg_type == NLMSG_ERROR) {
 				struct nlmsgerr *l_err = (struct nlmsgerr*)NLMSG_DATA(h);
 				if (h->nlmsg_len < NLMSG_LENGTH(sizeof(struct nlmsgerr))) {
-					bb_simple_error_msg("ERROR truncated");
+					bb_error_msg("ERROR truncated");
 				} else {
 					errno = -l_err->error;
-					bb_simple_perror_msg("RTNETLINK answers");
+					bb_perror_msg("RTNETLINK answers");
 				}
 				goto ret;
 			}
@@ -201,7 +169,7 @@ static int rtnl_dump_filter(struct rtnl_handle *rth,
 			h = NLMSG_NEXT(h, status);
 		}
 		if (msg.msg_flags & MSG_TRUNC) {
-			bb_simple_error_msg("message truncated");
+			bb_error_msg("message truncated");
 			continue;
 		}
 		if (status) {
@@ -221,7 +189,7 @@ int FAST_FUNC xrtnl_dump_filter(struct rtnl_handle *rth,
 {
 	int ret = rtnl_dump_filter(rth, filter, arg1/*, NULL, NULL*/);
 	if (ret < 0)
-		bb_simple_error_msg_and_die("dump terminated");
+		bb_error_msg_and_die("dump terminated");
 	return ret;
 }
 
@@ -243,15 +211,11 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 	struct sockaddr_nl nladdr;
 	struct iovec iov = { (void*)n, n->nlmsg_len };
 	char   *buf = xmalloc(8*1024); /* avoid big stack buffer */
-	/* Use designated initializers, struct layout is non-portable */
 	struct msghdr msg = {
-		.msg_name = (void*)&nladdr,
-		.msg_namelen = sizeof(nladdr),
-		.msg_iov = &iov,
-		.msg_iovlen = 1,
-		.msg_control = NULL,
-		.msg_controllen = 0,
-		.msg_flags = 0
+		(void*)&nladdr, sizeof(nladdr),
+		&iov, 1,
+		NULL, 0,
+		0
 	};
 
 	memset(&nladdr, 0, sizeof(nladdr));
@@ -266,7 +230,7 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 	status = sendmsg(rtnl->fd, &msg, 0);
 
 	if (status < 0) {
-		bb_simple_perror_msg("can't talk to rtnetlink");
+		bb_perror_msg("can't talk to rtnetlink");
 		goto ret;
 	}
 
@@ -280,11 +244,11 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 			if (errno == EINTR) {
 				continue;
 			}
-			bb_simple_perror_msg("OVERRUN");
+			bb_perror_msg("OVERRUN");
 			continue;
 		}
 		if (status == 0) {
-			bb_simple_error_msg("EOF on netlink");
+			bb_error_msg("EOF on netlink");
 			goto ret;
 		}
 		if (msg.msg_namelen != sizeof(nladdr)) {
@@ -297,7 +261,7 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 
 			if (l < 0 || len > status) {
 				if (msg.msg_flags & MSG_TRUNC) {
-					bb_simple_error_msg("truncated message");
+					bb_error_msg("truncated message");
 					goto ret;
 				}
 				bb_error_msg_and_die("malformed message: len=%d!", len);
@@ -320,7 +284,7 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 			if (h->nlmsg_type == NLMSG_ERROR) {
 				struct nlmsgerr *err = (struct nlmsgerr*)NLMSG_DATA(h);
 				if (l < (int)sizeof(struct nlmsgerr)) {
-					bb_simple_error_msg("ERROR truncated");
+					bb_error_msg("ERROR truncated");
 				} else {
 					errno = - err->error;
 					if (errno == 0) {
@@ -329,7 +293,7 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 						}
 						goto ret_0;
 					}
-					bb_simple_perror_msg("RTNETLINK answers");
+					bb_perror_msg("RTNETLINK answers");
 				}
 				goto ret;
 			}
@@ -338,13 +302,13 @@ int FAST_FUNC rtnl_talk(struct rtnl_handle *rtnl, struct nlmsghdr *n,
 				goto ret_0;
 			}
 
-			bb_simple_error_msg("unexpected reply!");
+			bb_error_msg("unexpected reply!");
 
 			status -= NLMSG_ALIGN(len);
 			h = (struct nlmsghdr*)((char*)h + NLMSG_ALIGN(len));
 		}
 		if (msg.msg_flags & MSG_TRUNC) {
-			bb_simple_error_msg("message truncated");
+			bb_error_msg("message truncated");
 			continue;
 		}
 		if (status) {
@@ -363,14 +327,14 @@ int FAST_FUNC addattr32(struct nlmsghdr *n, int maxlen, int type, uint32_t data)
 	int len = RTA_LENGTH(4);
 	struct rtattr *rta;
 
-	if ((int)(NLMSG_ALIGN(n->nlmsg_len + len)) > maxlen) {
+	if ((int)(NLMSG_ALIGN(n->nlmsg_len) + len) > maxlen) {
 		return -1;
 	}
 	rta = (struct rtattr*)(((char*)n) + NLMSG_ALIGN(n->nlmsg_len));
 	rta->rta_type = type;
 	rta->rta_len = len;
 	move_to_unaligned32(RTA_DATA(rta), data);
-	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len + len);
+	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len) + len;
 	return 0;
 }
 
@@ -379,14 +343,14 @@ int FAST_FUNC addattr_l(struct nlmsghdr *n, int maxlen, int type, void *data, in
 	int len = RTA_LENGTH(alen);
 	struct rtattr *rta;
 
-	if ((int)(NLMSG_ALIGN(n->nlmsg_len + len)) > maxlen) {
+	if ((int)(NLMSG_ALIGN(n->nlmsg_len) + len) > maxlen) {
 		return -1;
 	}
 	rta = (struct rtattr*)(((char*)n) + NLMSG_ALIGN(n->nlmsg_len));
 	rta->rta_type = type;
 	rta->rta_len = len;
 	memcpy(RTA_DATA(rta), data, alen);
-	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len + len);
+	n->nlmsg_len = NLMSG_ALIGN(n->nlmsg_len) + len;
 	return 0;
 }
 
@@ -395,14 +359,14 @@ int FAST_FUNC rta_addattr32(struct rtattr *rta, int maxlen, int type, uint32_t d
 	int len = RTA_LENGTH(4);
 	struct rtattr *subrta;
 
-	if (RTA_ALIGN(rta->rta_len + len) > maxlen) {
+	if (RTA_ALIGN(rta->rta_len) + len > maxlen) {
 		return -1;
 	}
 	subrta = (struct rtattr*)(((char*)rta) + RTA_ALIGN(rta->rta_len));
 	subrta->rta_type = type;
 	subrta->rta_len = len;
 	move_to_unaligned32(RTA_DATA(subrta), data);
-	rta->rta_len = NLMSG_ALIGN(rta->rta_len + len);
+	rta->rta_len = NLMSG_ALIGN(rta->rta_len) + len;
 	return 0;
 }
 
@@ -411,22 +375,20 @@ int FAST_FUNC rta_addattr_l(struct rtattr *rta, int maxlen, int type, void *data
 	struct rtattr *subrta;
 	int len = RTA_LENGTH(alen);
 
-	if (RTA_ALIGN(rta->rta_len + len) > maxlen) {
+	if (RTA_ALIGN(rta->rta_len) + len > maxlen) {
 		return -1;
 	}
 	subrta = (struct rtattr*)(((char*)rta) + RTA_ALIGN(rta->rta_len));
 	subrta->rta_type = type;
 	subrta->rta_len = len;
 	memcpy(RTA_DATA(subrta), data, alen);
-	rta->rta_len = NLMSG_ALIGN(rta->rta_len + len);
+	rta->rta_len = NLMSG_ALIGN(rta->rta_len) + len;
 	return 0;
 }
 
 
 void FAST_FUNC parse_rtattr(struct rtattr *tb[], int max, struct rtattr *rta, int len)
 {
-	memset(tb, 0, (max + 1) * sizeof(tb[0]));
-
 	while (RTA_OK(rta, len)) {
 		if (rta->rta_type <= max) {
 			tb[rta->rta_type] = rta;

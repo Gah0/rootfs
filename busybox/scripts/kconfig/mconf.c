@@ -27,10 +27,6 @@
 #include <unistd.h>
 #include <locale.h>
 
-#ifndef SIGWINCH
-#define SIGWINCH 28
-#endif
-
 #define LKC_DIRECT_LINK
 #include "lkc.h"
 
@@ -482,8 +478,7 @@ static int exec_conf(void)
 
 	*argptr++ = NULL;
 
-	if (pipe(pipefd))
-		_exit(EXIT_FAILURE);
+	pipe(pipefd);
 	pid = fork();
 	if (pid == 0) {
 		sigprocmask(SIG_SETMASK, &osset, NULL);
@@ -847,11 +842,9 @@ static void conf(struct menu *menu)
 static void show_textbox(const char *title, const char *text, int r, int c)
 {
 	int fd;
-	int len = strlen(text);
 
 	fd = creat(".help.tmp", 0777);
-	if (write(fd, text, len) != len)
-		exit(1);
+	write(fd, text, strlen(text));
 	close(fd);
 	show_file(".help.tmp", title, r, c);
 	unlink(".help.tmp");

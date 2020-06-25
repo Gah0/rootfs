@@ -1,5 +1,9 @@
 #!/bin/sh
 
+exec >/dev/null
+exec 2>&1
+exec </dev/null
+
 user=root
 baud=38400
 delay=3
@@ -21,4 +25,6 @@ test -x ./cfg && . ./cfg
 
 exec \
 env - "TERM=$TERM" PATH="$PATH" LOGIN_PRE_SUID_SCRIPT="$PWD/login.sh" \
+softlimit \
+setuidgid "$user" \
 getty "$baud" "$tty" "$TERM"

@@ -31,7 +31,8 @@
 ************************************************************************/
 /* safe decompression with overrun testing */
 int lzo1x_decompress_safe(const uint8_t* in, unsigned in_len,
-		uint8_t* out, unsigned* out_len /*, void* wrkmem */)
+		uint8_t* out, unsigned* out_len,
+		void* wrkmem UNUSED_PARAM)
 {
 	register uint8_t* op;
 	register const uint8_t* ip;

@@ -14,16 +14,6 @@
  *
  * This was originally written for blob and then adapted for busybox.
  */
-//config:config RX
-//config:	bool "rx (2.9 kb)"
-//config:	default y
-//config:	select PLATFORM_LINUX
-//config:	help
-//config:	Receive files using the Xmodem protocol.
-
-//applet:IF_RX(APPLET(rx, BB_DIR_USR_BIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_RX) += rx.o
 
 //usage:#define rx_trivial_usage
 //usage:       "FILE"
@@ -94,7 +84,7 @@ static int receive(/*int read_fd, */int file_fd)
 		int blockBegin;
 		int blockNo, blockNoOnesCompl;
 		int cksum_or_crc;
-		unsigned expected;
+		int expected;
 		int i, j;
 
 		blockBegin = read_byte(timeout);
@@ -111,7 +101,7 @@ static int receive(/*int read_fd, */int file_fd)
 			 && blockBuf[blockLength - 3] == PAD
 			) {
 				while (blockLength
-				    && blockBuf[blockLength - 1] == PAD
+			           && blockBuf[blockLength - 1] == PAD
 				) {
 					blockLength--;
 				}
@@ -120,7 +110,7 @@ static int receive(/*int read_fd, */int file_fd)
 		/* Write previously received block */
 		errno = 0;
 		if (full_write(file_fd, blockBuf, blockLength) != blockLength) {
-			bb_simple_perror_msg(bb_msg_write_error);
+			bb_perror_msg(bb_msg_write_error);
 			goto fatal;
 		}
 
@@ -150,7 +140,7 @@ static int receive(/*int read_fd, */int file_fd)
 			goto timeout;
 
 		if (blockNo != (255 - blockNoOnesCompl)) {
-			bb_simple_error_msg("bad block ones compl");
+			bb_error_msg("bad block ones compl");
 			goto error;
 		}
 
@@ -229,7 +219,7 @@ static int receive(/*int read_fd, */int file_fd)
 				do_crc = 0;
 				goto timeout;
 			}
-			bb_simple_error_msg("too many errors; giving up");
+			bb_error_msg("too many errors; giving up");
  fatal:
 			/* 5 CAN followed by 5 BS. Don't try too hard... */
 			safe_write(write_fd, "\030\030\030\030\030\010\010\010\010\010", 10);
@@ -263,7 +253,6 @@ int rx_main(int argc UNUSED_PARAM, char **argv)
 
 	termios_err = tcgetattr(read_fd, &tty);
 	if (termios_err == 0) {
-//TODO: use set_termios_to_raw()
 		orig_tty = tty;
 		cfmakeraw(&tty);
 		tcsetattr(read_fd, TCSAFLUSH, &tty);

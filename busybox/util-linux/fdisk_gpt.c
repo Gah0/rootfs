@@ -36,13 +36,14 @@ typedef struct {
 	uint64_t lba_start;
 	uint64_t lba_end;
 	uint64_t flags;
-	uint16_t name36[36];
+	uint16_t name[36];
 } gpt_partition;
 
 static gpt_header *gpt_hdr;
 
 static char *part_array;
 static unsigned int n_parts;
+static unsigned int part_array_len;
 static unsigned int part_entry_len;
 
 static inline gpt_partition *
@@ -72,34 +73,18 @@ gpt_print_guid(uint8_t *buf)
 		buf[10], buf[11], buf[12], buf[13], buf[14], buf[15]);
 }
 
+/* TODO: real unicode support */
 static void
-gpt_print_wide36(uint16_t *s)
+gpt_print_wide(uint16_t *s, int max_len)
 {
-#if ENABLE_UNICODE_SUPPORT
-	char buf[37 * 4];
-	wchar_t wc[37];
 	int i = 0;
-	while (i < ARRAY_SIZE(wc)-1) {
-		if (s[i] == 0)
-			break;
-		wc[i] = s[i];
-		i++;
+
+	while (i < max_len) {
+		if (*s == 0)
+			return;
+		fputc(*s, stdout);
+		s++;
 	}
-	wc[i] = 0;
-	if (wcstombs(buf, wc, sizeof(buf)) <= sizeof(buf)-1)
-		fputs(printable_string(buf), stdout);
-#else
-	char buf[37];
-	int i = 0;
-	while (i < ARRAY_SIZE(buf)-1) {
-		if (s[i] == 0)
-			break;
-		buf[i] = (0x20 <= s[i] && s[i] < 0x7f) ? s[i] : '?';
-		i++;
-	}
-	buf[i] = '\0';
-	fputs(buf, stdout);
-#endif
 }
 
 static void
@@ -121,29 +106,20 @@ gpt_list_table(int xtra UNUSED_PARAM)
 		(unsigned long long)SWAP_LE64(gpt_hdr->first_usable_lba),
 		(unsigned long long)SWAP_LE64(gpt_hdr->last_usable_lba));
 
-/* "GPT fdisk" has a concept of 16-bit extension of the original MBR 8-bit type codes,
- * which it displays here: its output columns are ... Size Code Name
- * They are their own invention and are not stored on disk.
- * Looks like they use them to support "hybrid" GPT: for example, they have
- *   AddType(0x8307, "69DAD710-2CE4-4E3C-B16C-21A1D49ABED3", "Linux ARM32 root (/)");
- * and then (code>>8) matches what you need to put into MBR's type field for such a partition.
- * To print those codes, we'd need a GUID lookup table. Lets just drop the "Code" column instead:
- */
-	puts("Number  Start (sector)    End (sector)  Size Name");
-	//    123456 123456789012345 123456789012345 12345 abc
+	printf("Number  Start (sector)    End (sector)  Size       Code  Name\n");
 	for (i = 0; i < n_parts; i++) {
 		gpt_partition *p = gpt_part(i);
 		if (p->lba_start) {
 			smart_ulltoa5((1 + SWAP_LE64(p->lba_end) - SWAP_LE64(p->lba_start)) * sector_size,
 				numstr6, " KMGTPEZY")[0] = '\0';
-			printf("%6u %15llu %15llu %s ",
+			printf("%4u %15llu %15llu %11s   %04x  ",
 				i + 1,
 				(unsigned long long)SWAP_LE64(p->lba_start),
 				(unsigned long long)SWAP_LE64(p->lba_end),
-				numstr6
-			);
-			gpt_print_wide36(p->name36);
-			bb_putchar('\n');
+				numstr6,
+				0x0700 /* FIXME */);
+			gpt_print_wide(p->name, 18);
+			printf("\n");
 		}
 	}
 }
@@ -151,7 +127,6 @@ gpt_list_table(int xtra UNUSED_PARAM)
 static int
 check_gpt_label(void)
 {
-	unsigned part_array_len;
 	struct partition *first = pt_offset(MBRbuffer, 0);
 	struct pte pe;
 	uint32_t crc;
@@ -161,7 +136,7 @@ check_gpt_label(void)
 	if (!valid_part_table_flag(MBRbuffer)
 	 || first->sys_ind != LEGACY_GPT_TYPE
 	) {
-		current_label_type = LABEL_DOS;
+		current_label_type = 0;
 		return 0;
 	}
 
@@ -171,13 +146,12 @@ check_gpt_label(void)
 	gpt_hdr = (void *)pe.sectorbuffer;
 
 	if (gpt_hdr->magic != SWAP_LE64(GPT_MAGIC)) {
-		current_label_type = LABEL_DOS;
+		current_label_type = 0;
 		return 0;
 	}
 
-	init_unicode();
 	if (!global_crc32_table) {
-		global_crc32_new_table_le();
+		global_crc32_table = crc32_filltable(NULL, 0);
 	}
 
 	crc = SWAP_LE32(gpt_hdr->hdr_crc32);
@@ -194,7 +168,7 @@ check_gpt_label(void)
 	 || SWAP_LE32(gpt_hdr->hdr_size) > sector_size
 	) {
 		puts("\nwarning: unable to parse GPT disklabel\n");
-		current_label_type = LABEL_DOS;
+		current_label_type = 0;
 		return 0;
 	}
 

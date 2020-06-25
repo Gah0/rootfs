@@ -13,7 +13,7 @@ modification, are permitted provided that the following conditions are met:
    3. The name of the author may not be used to endorse or promote products
       derived from this software without specific prior written permission.
 
-THIS SOFTWARE IS PROVIDED BY THE AUTHOR ''AS IS'' AND ANY EXPRESS OR IMPLIED
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR ``AS IS'' AND ANY EXPRESS OR IMPLIED
 WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF
 MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO
 EVENT SHALL THE AUTHOR BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
@@ -26,6 +26,7 @@ ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 /* Busyboxed by Denys Vlasenko <vda.linux@googlemail.com> */
+/* TODO: depends on runit_lib.c - review and reduce/eliminate */
 
 /*
 Config files
@@ -123,45 +124,26 @@ log message, you can use a pattern like this instead
 
 -*: *: pid *
 */
-//config:config SVLOGD
-//config:	bool "svlogd (16 kb)"
-//config:	default y
-//config:	help
-//config:	svlogd continuously reads log data from its standard input, optionally
-//config:	filters log messages, and writes the data to one or more automatically
-//config:	rotated logs.
-
-//applet:IF_SVLOGD(APPLET(svlogd, BB_DIR_USR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_SVLOGD) += svlogd.o
 
 //usage:#define svlogd_trivial_usage
-//usage:       "[-tttv] [-r C] [-R CHARS] [-l MATCHLEN] [-b BUFLEN] DIR..."
+//usage:       "[-ttv] [-r C] [-R CHARS] [-l MATCHLEN] [-b BUFLEN] DIR..."
 //usage:#define svlogd_full_usage "\n\n"
-//usage:       "Read log data from stdin and write to rotated log files in DIRs"
-//usage:   "\n"
-//usage:   "\n""-r C		Replace non-printable characters with C"
-//usage:   "\n""-R CHARS	Also replace CHARS with C (default _)"
-//usage:   "\n""-t		Timestamp with @tai64n"
-//usage:   "\n""-tt		Timestamp with yyyy-mm-dd_hh:mm:ss.sssss"
-//usage:   "\n""-ttt		Timestamp with yyyy-mm-ddThh:mm:ss.sssss"
-//usage:   "\n""-v		Verbose"
+//usage:       "Continuously read log data from stdin and write to rotated log files in DIRs"
 //usage:   "\n"
 //usage:   "\n""DIR/config file modifies behavior:"
-//usage:   "\n""sSIZE - when to rotate logs (default 1000000, 0 disables)"
+//usage:   "\n""sSIZE - when to rotate logs"
 //usage:   "\n""nNUM - number of files to retain"
-///////:   "\n""NNUM - min number files to retain" - confusing
-///////:   "\n""tSEC - rotate file if it get SEC seconds old" - confusing
+/*usage:   "\n""NNUM - min number files to retain" - confusing */
+/*usage:   "\n""tSEC - rotate file if it get SEC seconds old" - confusing */
 //usage:   "\n""!PROG - process rotated log with PROG"
-///////:   "\n""uIPADDR - send log over UDP" - unsupported
-///////:   "\n""UIPADDR - send log over UDP and DONT log" - unsupported
-///////:   "\n""pPFX - prefix each line with PFX" - unsupported
+/*usage:   "\n""uIPADDR - send log over UDP" - unsupported */
+/*usage:   "\n""UIPADDR - send log over UDP and DONT log" - unsupported */
+/*usage:   "\n""pPFX - prefix each line with PFX" - unsupported */
 //usage:   "\n""+,-PATTERN - (de)select line for logging"
 //usage:   "\n""E,ePATTERN - (de)select line for stderr"
 
 #include <sys/file.h>
 #include "libbb.h"
-#include "common_bufsiz.h"
 #include "runit_lib.h"
 
 #define LESS(a,b) ((int)((unsigned)(b) - (unsigned)(a)) > 0)
@@ -240,15 +222,15 @@ struct globals {
 #define blocked_sigset (G.blocked_sigset)
 #define fl_flag_0      (G.fl_flag_0     )
 #define dirn           (G.dirn          )
-#define line bb_common_bufsiz1
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	SET_PTR_TO_GLOBALS(xzalloc(sizeof(G))); \
 	linemax = 1000; \
 	/*buflen = 1024;*/ \
 	linecomplete = 1; \
 	replace = ""; \
 } while (0)
+
+#define line bb_common_bufsiz1
 
 
 #define FATAL "fatal: "
@@ -274,7 +256,7 @@ static void warnx(const char *m0, const char *m1)
 }
 static void pause_nomem(void)
 {
-	bb_simple_error_msg(PAUSE"out of memory");
+	bb_error_msg(PAUSE"out of memory");
 	sleep(3);
 }
 static void pause1cannot(const char *m0)
@@ -345,20 +327,17 @@ static unsigned pmatch(const char *p, const char *s, unsigned len)
 /*** ex fmt_ptime.[ch] ***/
 
 /* NUL terminated */
-static void fmt_time_human_30nul(char *s, char dt_delim)
+static void fmt_time_human_30nul(char *s)
 {
-	struct tm tm;
 	struct tm *ptm;
 	struct timeval tv;
 
 	gettimeofday(&tv, NULL);
-	ptm = gmtime_r(&tv.tv_sec, &tm);
-	/* ^^^ using gmtime_r() instead of gmtime() to not use static data */
-	sprintf(s, "%04u-%02u-%02u%c%02u:%02u:%02u.%06u000",
+	ptm = gmtime(&tv.tv_sec);
+	sprintf(s, "%04u-%02u-%02u_%02u:%02u:%02u.%06u000",
 		(unsigned)(1900 + ptm->tm_year),
 		(unsigned)(ptm->tm_mon + 1),
 		(unsigned)(ptm->tm_mday),
-		dt_delim,
 		(unsigned)(ptm->tm_hour),
 		(unsigned)(ptm->tm_min),
 		(unsigned)(ptm->tm_sec),
@@ -793,7 +772,7 @@ static NOINLINE unsigned logdir_open(struct logdir *ld, const char *fn)
 			case '!':
 				if (s[1]) {
 					free(ld->processor);
-					ld->processor = wstrdup(&s[1]);
+					ld->processor = wstrdup(s);
 				}
 				break;
 			}
@@ -1010,7 +989,7 @@ static void sig_hangup_handler(int sig_no UNUSED_PARAM)
 	reopenasap = 1;
 }
 
-static void logmatch(struct logdir *ld, char* lineptr, int lineptr_len)
+static void logmatch(struct logdir *ld)
 {
 	char *s;
 
@@ -1021,12 +1000,12 @@ static void logmatch(struct logdir *ld, char* lineptr, int lineptr_len)
 		switch (s[0]) {
 		case '+':
 		case '-':
-			if (pmatch(s+1, lineptr, lineptr_len))
+			if (pmatch(s+1, line, linelen))
 				ld->match = s[0];
 			break;
 		case 'e':
 		case 'E':
-			if (pmatch(s+1, lineptr, lineptr_len))
+			if (pmatch(s+1, line, linelen))
 				ld->matcherr = s[0];
 			break;
 		}
@@ -1045,10 +1024,9 @@ int svlogd_main(int argc, char **argv)
 
 	INIT_G();
 
-	opt = getopt32(argv, "^"
-			"r:R:l:b:tv" "\0" "tt:vv",
-			&r, &replace, &l, &b, &timestamp, &verbose
-	);
+	opt_complementary = "tt:vv";
+	opt = getopt32(argv, "r:R:l:b:tv",
+			&r, &replace, &l, &b, &timestamp, &verbose);
 	if (opt & 1) { // -r
 		repl = r[0];
 		if (!repl || r[1])
@@ -1056,9 +1034,9 @@ int svlogd_main(int argc, char **argv)
 	}
 	if (opt & 2) if (!repl) repl = '_'; // -R
 	if (opt & 4) { // -l
-		linemax = xatou_range(l, 0, COMMON_BUFSIZE-26);
+		linemax = xatou_range(l, 0, BUFSIZ-26);
 		if (linemax == 0)
-			linemax = COMMON_BUFSIZE-26;
+			linemax = BUFSIZ-26;
 		if (linemax < 256)
 			linemax = 256;
 	}
@@ -1170,8 +1148,8 @@ int svlogd_main(int argc, char **argv)
 		if (timestamp) {
 			if (timestamp == 1)
 				fmt_time_bernstein_25(stamp);
-			else /* 2+: */
-				fmt_time_human_30nul(stamp, timestamp == 2 ? '_' : 'T');
+			else /* 2: */
+				fmt_time_human_30nul(stamp);
 			printlen += 26;
 			printptr -= 26;
 			memcpy(printptr, stamp, 25);
@@ -1182,7 +1160,7 @@ int svlogd_main(int argc, char **argv)
 			if (ld->fddir == -1)
 				continue;
 			if (ld->inst)
-				logmatch(ld, lineptr, linelen);
+				logmatch(ld);
 			if (ld->matcherr == 'e') {
 				/* runit-1.8.0 compat: if timestamping, do it on stderr too */
 				////full_write(STDERR_FILENO, printptr, printlen);

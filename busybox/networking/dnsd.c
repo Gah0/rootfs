@@ -16,15 +16,6 @@
  * Some bugfix and minor changes was applied by Roberto A. Foglietta who made
  * the first porting of oao' scdns to busybox also.
  */
-//config:config DNSD
-//config:	bool "dnsd (9.8 kb)"
-//config:	default y
-//config:	help
-//config:	Small and static DNS server daemon.
-
-//applet:IF_DNSD(APPLET(dnsd, BB_DIR_USR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_DNSD) += dnsd.o
 
 //usage:#define dnsd_trivial_usage
 //usage:       "[-dvs] [-c CONFFILE] [-t TTL_SEC] [-p PORT] [-i ADDR]"
@@ -133,7 +124,7 @@ static struct dns_entry *parse_conf_file(const char *fileconf)
 		}
 
 		if (OPT_verbose)
-			bb_info_msg("name:%s, ip:%s", token[0], token[1]);
+			bb_error_msg("name:%s, ip:%s", token[0], token[1]);
 
 		/* sizeof(*m) includes 1 byte for m->name[0] */
 		m = xzalloc(sizeof(*m) + strlen(token[0]) + 1);
@@ -203,7 +194,7 @@ static char *table_lookup(struct dns_entry *d,
 		if ((len != 1 || d->name[1] != '*')
 		/* we assume (do not check) that query_string
 		 * ends in ".in-addr.arpa" */
-		 && is_prefixed_with(query_string, d->rip)
+		 && strncmp(d->rip, query_string, strlen(d->rip)) == 0
 		) {
 #if DEBUG
 			fprintf(stderr, "Found name:%s\n", d->name);
@@ -360,7 +351,7 @@ RDATA   a variable length string of octets that describes the resource.
 
 In order to reduce the size of messages, domain names coan be compressed.
 An entire domain name or a list of labels at the end of a domain name
-is replaced with a pointer to a prior occurrence of the same name.
+is replaced with a pointer to a prior occurance of the same name.
 
 The pointer takes the form of a two octet sequence:
     +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
@@ -395,11 +386,11 @@ static int process_packet(struct dns_entry *conf_data,
 
 	head = (struct dns_head *)buf;
 	if (head->nquer == 0) {
-		bb_simple_error_msg("packet has 0 queries, ignored");
+		bb_error_msg("packet has 0 queries, ignored");
 		return 0; /* don't reply */
 	}
 	if (head->flags & htons(0x8000)) { /* QR bit */
-		bb_simple_error_msg("response packet, ignored");
+		bb_error_msg("response packet, ignored");
 		return 0; /* don't reply */
 	}
 	/* QR = 1 "response", RCODE = 4 "Not Implemented" */
@@ -438,7 +429,7 @@ static int process_packet(struct dns_entry *conf_data,
 	answstr = table_lookup(conf_data, type, query_string);
 #if DEBUG
 	/* Shows lengths instead of dots, unusable for !DEBUG */
-	bb_info_msg("'%s'->'%s'", query_string, answstr);
+	bb_error_msg("'%s'->'%s'", query_string, answstr);
 #endif
 	outr_rlen = 4;
 	if (answstr && type == htons(REQ_PTR)) {
@@ -474,7 +465,7 @@ static int process_packet(struct dns_entry *conf_data,
 	 * RCODE = 0 "success"
 	 */
 	if (OPT_verbose)
-		bb_simple_info_msg("returning positive reply");
+		bb_error_msg("returning positive reply");
 	outr_flags = htons(0x8000 | 0x0400 | 0);
 	/* we have one answer */
 	head->nansw = htons(1);
@@ -539,7 +530,7 @@ int dnsd_main(int argc UNUSED_PARAM, char **argv)
 
 	{
 		char *p = xmalloc_sockaddr2dotted(&lsa->u.sa);
-		bb_info_msg("accepting UDP packets on %s", p);
+		bb_error_msg("accepting UDP packets on %s", p);
 		free(p);
 	}
 
@@ -557,7 +548,7 @@ int dnsd_main(int argc UNUSED_PARAM, char **argv)
 			continue;
 		}
 		if (OPT_verbose)
-			bb_simple_info_msg("got UDP packet");
+			bb_error_msg("got UDP packet");
 		buf[r] = '\0'; /* paranoia */
 		r = process_packet(conf_data, conf_ttl, buf);
 		if (r <= 0)

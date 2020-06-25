@@ -124,7 +124,8 @@ int conf_read_simple(const char *name)
 		case S_INT:
 		case S_HEX:
 		case S_STRING:
-			free(sym->user.val);
+			if (sym->user.val)
+				free(sym->user.val);
 		default:
 			sym->user.val = NULL;
 			sym->user.tri = no;
@@ -334,9 +335,7 @@ int conf_write(const char *name)
 	struct symbol *sym;
 	struct menu *menu;
 	const char *basename;
-	char dirname[128];
-	char tmpname[256];
-	char newname[256];
+	char dirname[128], tmpname[128], newname[128];
 	int type, l;
 	const char *str;
 	time_t now;

@@ -7,12 +7,12 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
-char* FAST_FUNC trim(char *s)
+void FAST_FUNC trim(char *s)
 {
 	size_t len = strlen(s);
-	size_t old = len;
 
 	/* trim trailing whitespace */
 	while (len && isspace(s[len-1]))
@@ -26,12 +26,5 @@ char* FAST_FUNC trim(char *s)
 			memmove(s, nws, len);
 		}
 	}
-
-	s += len;
-	/* If it was a "const char*" which does not need trimming,
-	 * avoid superfluous store */
-	if (old != len)
-		*s = '\0';
-
-	return s;
+	s[len] = '\0';
 }

@@ -1,9 +1,14 @@
-URL=http://busybox.net
+# check that first assignment has proper effect on second one
 
-echo $URL
-echo ${URL}_abc
+(
+a=a A=$a
+echo a=$a A=$A
+)
+(a=a A=$a; echo a=$a A=$A)
+(a=a A=$a echo a=$a A=$A)
+(a=a A=$a /bin/echo a=$a A=$A)
 
-true
-false; echo $? ${?}
-true
-{ false; echo $? ${?}; }
+f() { echo a=$a A=$A; }
+
+(a=a A=$a f)
+(a=a A=$a; f)

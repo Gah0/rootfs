@@ -27,16 +27,11 @@ static uint32_t xz_crc32(const uint8_t *buf, size_t size, uint32_t crc)
 	return ~crc32_block_endian0(~crc, buf, size, global_crc32_table);
 }
 
-/* We use arch-optimized unaligned fixed-endian accessors.
- * They have been moved to libbb (proved to be useful elsewhere as well),
- * just check that we have them defined:
- */
-#if !defined(get_unaligned_le32) \
- || !defined(get_unaligned_be32) \
- || !defined(put_unaligned_le32) \
- || !defined(put_unaligned_be32)
-# error get_unaligned_le32 accessors are not defined
-#endif
+/* We use arch-optimized unaligned accessors */
+#define get_unaligned_le32(buf) ({ uint32_t v; move_from_unaligned32(v, buf); SWAP_LE32(v); })
+#define get_unaligned_be32(buf) ({ uint32_t v; move_from_unaligned32(v, buf); SWAP_BE32(v); })
+#define put_unaligned_le32(val, buf) move_to_unaligned32(buf, SWAP_LE32(val))
+#define put_unaligned_be32(val, buf) move_to_unaligned32(buf, SWAP_BE32(val))
 
 #include "unxz/xz_dec_bcj.c"
 #include "unxz/xz_dec_lzma2.c"
@@ -52,7 +47,7 @@ unpack_xz_stream(transformer_state_t *xstate)
 	IF_DESKTOP(long long) int total = 0;
 
 	if (!global_crc32_table)
-		global_crc32_new_table_le();
+		global_crc32_table = crc32_filltable(NULL, /*endian:*/ 0);
 
 	memset(&iobuf, 0, sizeof(iobuf));
 	membuf = xmalloc(2 * BUFSIZ);
@@ -60,7 +55,7 @@ unpack_xz_stream(transformer_state_t *xstate)
 	iobuf.out = membuf + BUFSIZ;
 	iobuf.out_size = BUFSIZ;
 
-	if (!xstate || xstate->signature_skipped) {
+	if (!xstate || xstate->check_signature == 0) {
 		/* Preload XZ file signature */
 		strcpy((char*)membuf, HEADER_MAGIC);
 		iobuf.in_size = HEADER_MAGIC_SIZE;
@@ -74,7 +69,7 @@ unpack_xz_stream(transformer_state_t *xstate)
 		if (iobuf.in_pos == iobuf.in_size) {
 			int rd = safe_read(xstate->src_fd, membuf, BUFSIZ);
 			if (rd < 0) {
-				bb_simple_error_msg(bb_msg_read_error);
+				bb_error_msg(bb_msg_read_error);
 				total = -1;
 				break;
 			}
@@ -96,24 +91,6 @@ unpack_xz_stream(transformer_state_t *xstate)
 			 */
 			do {
 				if (membuf[iobuf.in_pos] != 0) {
-					/* There is more data, but is it XZ data?
-					 * Example: dpkg-deb -f busybox_1.30.1-4_amd64.deb
-					 * reads control.tar.xz "control" file
-					 * inside the ar archive, but tar.xz
-					 * extraction code reaches end of xz data,
-					 * reached this code and reads the beginning
-					 * of data.tar.xz's ar header, which isn't xz data,
-					 * and prints "corrupted data".
-					 * The correct solution is to not read
-					 * past nested archive (to simulate EOF).
-					 * This is a workaround:
-					 */
-					if (membuf[iobuf.in_pos] != 0xfd) {
-						/* It's definitely not a xz signature
-						 * (which is 0xfd,"7zXZ",0x00).
-						 */
-						goto end;
-					}
 					xz_dec_reset(state);
 					goto do_run;
 				}
@@ -141,12 +118,12 @@ unpack_xz_stream(transformer_state_t *xstate)
 			continue;
 		}
 		if (xz_result != XZ_OK && xz_result != XZ_UNSUPPORTED_CHECK) {
-			bb_simple_error_msg("corrupted data");
+			bb_error_msg("corrupted data");
 			total = -1;
 			break;
 		}
 	}
- end:
+
 	xz_dec_end(state);
 	free(membuf);
 

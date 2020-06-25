@@ -21,28 +21,6 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
-//config:config GETTY
-//config:	bool "getty (10 kb)"
-//config:	default y
-//config:	select FEATURE_SYSLOG
-//config:	help
-//config:	getty lets you log in on a tty. It is normally invoked by init.
-//config:
-//config:	Note that you can save a few bytes by disabling it and
-//config:	using login applet directly.
-//config:	If you need to reset tty attributes before calling login,
-//config:	this script approximates getty:
-//config:
-//config:	exec </dev/$1 >/dev/$1 2>&1 || exit 1
-//config:	reset
-//config:	stty sane; stty ispeed 38400; stty ospeed 38400
-//config:	printf "%s login: " "`hostname`"
-//config:	read -r login
-//config:	exec /bin/login "$login"
-
-//applet:IF_GETTY(APPLET(getty, BB_DIR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_GETTY) += getty.o
 
 #include "libbb.h"
 #include <syslog.h>
@@ -131,7 +109,7 @@ struct globals {
 //usage:     "\n"
 //usage:     "\nBAUD_RATE of 0 leaves it unchanged"
 
-#define OPT_STR "I:LH:f:hil:mt:+wn"
+static const char opt_string[] ALIGN1 = "I:LH:f:hil:mt:wn";
 #define F_INITSTRING    (1 << 0)   /* -I */
 #define F_LOCAL         (1 << 1)   /* -L */
 #define F_FAKEHOST      (1 << 2)   /* -H */
@@ -168,7 +146,7 @@ static void parse_speeds(char *arg)
 		/* note: arg "0" turns into speed B0 */
 		G.numspeed++;
 		if (G.numspeed > MAX_SPEED)
-			bb_simple_error_msg_and_die("too many alternate speeds");
+			bb_error_msg_and_die("too many alternate speeds");
 	}
 	debug("exiting parse_speeds\n");
 }
@@ -179,7 +157,8 @@ static void parse_args(char **argv)
 	char *ts;
 	int flags;
 
-	flags = getopt32(argv, "^" OPT_STR "\0" "-2"/* at least 2 args*/,
+	opt_complementary = "-2:t+"; /* at least 2 args; -t N */
+	flags = getopt32(argv, opt_string,
 		&G.initstring, &G.fakehost, &G.issue,
 		&G.login, &G.timeout
 	);
@@ -230,7 +209,7 @@ static void open_tty(void)
 		 * Make sure it is open for read/write.
 		 */
 		if ((fcntl(0, F_GETFL) & (O_RDWR|O_RDONLY|O_WRONLY)) != O_RDWR)
-			bb_simple_error_msg_and_die("stdin is not open for read/write");
+			bb_error_msg_and_die("stdin is not open for read/write");
 
 		/* Try to get real tty name instead of "-" */
 		n = xmalloc_ttyname(0);
@@ -243,7 +222,7 @@ static void open_tty(void)
 static void set_tty_attrs(void)
 {
 	if (tcsetattr_stdin_TCSANOW(&G.tty_attrs) < 0)
-		bb_simple_perror_msg_and_die("tcsetattr");
+		bb_perror_msg_and_die("tcsetattr");
 }
 
 /* We manipulate tty_attrs this way:
@@ -315,7 +294,7 @@ static void init_tty_attrs(int speed)
 	/* non-raw output; add CR to each NL */
 	G.tty_attrs.c_oflag = OPOST | ONLCR;
 
-	/* reads will block only if < 1 char is available */
+	/* reads would block only if < 1 char is available */
 	G.tty_attrs.c_cc[VMIN] = 1;
 	/* no timeout (reads block forever) */
 	G.tty_attrs.c_cc[VTIME] = 0;
@@ -485,7 +464,7 @@ static char *get_logname(void)
 				finalize_tty_attrs();
 				if (errno == EINTR || errno == EIO)
 					exit(EXIT_SUCCESS);
-				bb_simple_perror_msg_and_die(bb_msg_read_error);
+				bb_perror_msg_and_die(bb_msg_read_error);
 			}
 
 			switch (c) {
@@ -541,11 +520,6 @@ static void alarm_handler(int sig UNUSED_PARAM)
 	_exit(EXIT_SUCCESS);
 }
 
-static void sleep10(void)
-{
-	sleep(10);
-}
-
 int getty_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int getty_main(int argc UNUSED_PARAM, char **argv)
 {
@@ -582,7 +556,7 @@ int getty_main(int argc UNUSED_PARAM, char **argv)
 			//	" sid %d pgid %d",
 			//	pid, getppid(),
 			//	getsid(0), getpgid(0));
-			bb_simple_perror_msg_and_die("setsid");
+			bb_perror_msg_and_die("setsid");
 			/*
 			 * When we can end up here?
 			 * Example: setsid() fails when run alone in interactive shell:
@@ -625,7 +599,7 @@ int getty_main(int argc UNUSED_PARAM, char **argv)
 		close(n--);
 
 	/* Logging. We want special flavor of error_msg_and_die */
-	die_func = sleep10;
+	die_sleep = 10;
 	msg_eol = "\r\n";
 	/* most likely will internally use fd #3 in CLOEXEC mode: */
 	openlog(applet_name, LOG_PID, LOG_AUTH);
@@ -651,13 +625,13 @@ int getty_main(int argc UNUSED_PARAM, char **argv)
 	tsid = tcgetsid(STDIN_FILENO);
 	if (tsid < 0 || pid != tsid) {
 		if (ioctl(STDIN_FILENO, TIOCSCTTY, /*force:*/ (long)1) < 0)
-			bb_simple_perror_msg_and_die("TIOCSCTTY");
+			bb_perror_msg_and_die("TIOCSCTTY");
 	}
 
 #ifdef __linux__
 	/* Make ourself a foreground process group within our session */
 	if (tcsetpgrp(STDIN_FILENO, pid) < 0)
-		bb_simple_perror_msg_and_die("tcsetpgrp");
+		bb_perror_msg_and_die("tcsetpgrp");
 #endif
 
 	/*
@@ -669,7 +643,7 @@ int getty_main(int argc UNUSED_PARAM, char **argv)
 	 * 5 seconds seems to be a good value.
 	 */
 	if (tcgetattr(STDIN_FILENO, &G.tty_attrs) < 0)
-		bb_simple_perror_msg_and_die("tcgetattr");
+		bb_perror_msg_and_die("tcgetattr");
 
 	/* Update the utmp file. This tty is ours now! */
 	update_utmp(pid, LOGIN_PROCESS, G.tty_name, "LOGIN", G.fakehost);

@@ -13,6 +13,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 /* This program evaluates expressions.  Each token (operator, operand,
  * parenthesis) of the expression must be a separate argument.  The
  * parser used is a reasonably general one, though any incarnation of
@@ -20,27 +21,9 @@
  *
  * No parse tree is needed; a new node is evaluated immediately.
  * One function can handle multiple operators all of equal precedence,
- * provided they all associate ((x op x) op x).
- */
-//config:config EXPR
-//config:	bool "expr (6.6 kb)"
-//config:	default y
-//config:	help
-//config:	expr is used to calculate numbers and print the result
-//config:	to standard output.
-//config:
-//config:config EXPR_MATH_SUPPORT_64
-//config:	bool "Extend Posix numbers support to 64 bit"
-//config:	default y
-//config:	depends on EXPR
-//config:	help
-//config:	Enable 64-bit math support in the expr applet. This will make
-//config:	the applet slightly larger, but will allow computation with very
-//config:	large numbers.
+ * provided they all associate ((x op x) op x). */
 
-//applet:IF_EXPR(APPLET_NOEXEC(expr, expr, BB_DIR_USR_BIN, BB_SUID_DROP, expr))
-
-//kbuild:lib-$(CONFIG_EXPR) += expr.o
+/* no getopt needed */
 
 //usage:#define expr_trivial_usage
 //usage:       "EXPRESSION"
@@ -78,7 +61,6 @@
 //usage:       "of characters matched or 0."
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 #include "xregex.h"
 
 #if ENABLE_EXPR_MATH_SUPPORT_64
@@ -117,11 +99,8 @@ typedef struct valinfo VALUE;
 struct globals {
 	char **args;
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
-#define INIT_G() do { \
-	setup_common_bufsiz(); \
-	/* NB: noexec applet - globals not zeroed */ \
-} while (0)
+#define G (*(struct globals*)&bb_common_bufsiz1)
+#define INIT_G() do { } while (0)
 
 /* forward declarations */
 static VALUE *eval(void);
@@ -134,7 +113,7 @@ static VALUE *int_value(arith_t i)
 	VALUE *v;
 
 	v = xzalloc(sizeof(VALUE));
-	if (INTEGER) /* otherwise xzalloc did it already */
+	if (INTEGER) /* otherwise xzaaloc did it already */
 		v->type = INTEGER;
 	v->u.i = i;
 	return v;
@@ -147,7 +126,7 @@ static VALUE *str_value(const char *s)
 	VALUE *v;
 
 	v = xzalloc(sizeof(VALUE));
-	if (STRING) /* otherwise xzalloc did it already */
+	if (STRING) /* otherwise xzaaloc did it already */
 		v->type = STRING;
 	v->u.s = xstrdup(s);
 	return v;
@@ -249,7 +228,7 @@ static arith_t arithmetic_common(VALUE *l, VALUE *r, int op)
 	arith_t li, ri;
 
 	if (!toarith(l) || !toarith(r))
-		bb_simple_error_msg_and_die("non-numeric argument");
+		bb_error_msg_and_die("non-numeric argument");
 	li = l->u.i;
 	ri = r->u.i;
 	if (op == '+')
@@ -259,7 +238,7 @@ static arith_t arithmetic_common(VALUE *l, VALUE *r, int op)
 	if (op == '*')
 		return li * ri;
 	if (ri == 0)
-		bb_simple_error_msg_and_die("division by zero");
+		bb_error_msg_and_die("division by zero");
 	if (op == '/')
 		return li / ri;
 	return li % ri;
@@ -319,19 +298,19 @@ static VALUE *eval7(void)
 	VALUE *v;
 
 	if (!*G.args)
-		bb_simple_error_msg_and_die("syntax error");
+		bb_error_msg_and_die("syntax error");
 
 	if (nextarg("(")) {
 		G.args++;
 		v = eval();
 		if (!nextarg(")"))
-			bb_simple_error_msg_and_die("syntax error");
+			bb_error_msg_and_die("syntax error");
 		G.args++;
 		return v;
 	}
 
 	if (nextarg(")"))
-		bb_simple_error_msg_and_die("syntax error");
+		bb_error_msg_and_die("syntax error");
 
 	return str_value(*G.args++);
 }
@@ -353,7 +332,7 @@ static VALUE *eval6(void)
 	G.args++; /* We have a valid token, so get the next argument.  */
 	if (key == 1) { /* quote */
 		if (!*G.args)
-			bb_simple_error_msg_and_die("syntax error");
+			bb_error_msg_and_die("syntax error");
 		return str_value(*G.args++);
 	}
 	if (key == 2) { /* length */
@@ -546,11 +525,11 @@ int expr_main(int argc UNUSED_PARAM, char **argv)
 	xfunc_error_retval = 2; /* coreutils compat */
 	G.args = argv + 1;
 	if (*G.args == NULL) {
-		bb_simple_error_msg_and_die("too few arguments");
+		bb_error_msg_and_die("too few arguments");
 	}
 	v = eval();
 	if (*G.args)
-		bb_simple_error_msg_and_die("syntax error");
+		bb_error_msg_and_die("syntax error");
 	if (v->type == INTEGER)
 		printf("%" PF_REZ "d\n", PF_REZ_TYPE v->u.i);
 	else

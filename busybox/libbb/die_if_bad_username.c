@@ -6,6 +6,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 /* To avoid problems, the username should consist only of
@@ -57,5 +58,5 @@ void FAST_FUNC die_if_bad_username(const char *name)
 	 * including the terminating null byte.
 	 */
 	if (name - start >= LOGIN_NAME_MAX)
-		bb_simple_error_msg_and_die("name is too long");
+		bb_error_msg_and_die("name is too long");
 }

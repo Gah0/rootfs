@@ -9,6 +9,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 /* Add data to the start of the linked list.  */

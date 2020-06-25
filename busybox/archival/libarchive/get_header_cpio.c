@@ -1,9 +1,9 @@
 /* vi: set sw=4 ts=4: */
-/*
- * Copyright 2002 Laurence Anderson
+/* Copyright 2002 Laurence Anderson
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 #include "bb_archive.h"
 
@@ -33,14 +33,14 @@ char FAST_FUNC get_header_cpio(archive_handle_t *archive_handle)
 		goto create_hardlinks;
 	}
 	if (size != 110) {
-		bb_simple_error_msg_and_die("short read");
+		bb_error_msg_and_die("short read");
 	}
 	archive_handle->offset += 110;
 
-	if (!is_prefixed_with(&cpio_header[0], "07070")
+	if (strncmp(&cpio_header[0], "07070", 5) != 0
 	 || (cpio_header[5] != '1' && cpio_header[5] != '2')
 	) {
-		bb_simple_error_msg_and_die("unsupported cpio format, use newc or crc");
+		bb_error_msg_and_die("unsupported cpio format, use newc or crc");
 	}
 
 	if (sscanf(cpio_header + 6,
@@ -50,13 +50,8 @@ char FAST_FUNC get_header_cpio(archive_handle_t *archive_handle)
 			&inode, &mode, &uid, &gid,
 			&nlink, &mtime, &size,
 			&major, &minor, &namesize) != 10)
-		bb_simple_error_msg_and_die("damaged cpio file");
+		bb_error_msg_and_die("damaged cpio file");
 	file_header->mode = mode;
-	/* "cpio -R USER:GRP" support: */
-	if (archive_handle->cpio__owner.uid != (uid_t)-1L)
-		uid = archive_handle->cpio__owner.uid;
-	if (archive_handle->cpio__owner.gid != (gid_t)-1L)
-		gid = archive_handle->cpio__owner.gid;
 	file_header->uid = uid;
 	file_header->gid = gid;
 	file_header->mtime = mtime;
@@ -80,7 +75,7 @@ char FAST_FUNC get_header_cpio(archive_handle_t *archive_handle)
 	/* Update offset amount and skip padding before file contents */
 	data_align(archive_handle, 4);
 
-	if (strcmp(file_header->name, cpio_TRAILER) == 0) {
+	if (strcmp(file_header->name, "TRAILER!!!") == 0) {
 		/* Always round up. ">> 9" divides by 512 */
 		archive_handle->cpio__blocks = (uoff_t)(archive_handle->offset + 511) >> 9;
 		goto create_hardlinks;

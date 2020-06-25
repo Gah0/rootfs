@@ -9,6 +9,7 @@
 #include <net/if_arp.h>
 
 #include "common.h"
+#include "dhcpd.h"
 
 struct arpMsg {
 	/* Ethernet header */
@@ -53,12 +54,12 @@ int FAST_FUNC arpping(uint32_t test_nip,
 
 	s = socket(PF_PACKET, SOCK_PACKET, htons(ETH_P_ARP));
 	if (s == -1) {
-		bb_simple_perror_msg(bb_msg_can_not_create_raw_socket);
+		bb_perror_msg(bb_msg_can_not_create_raw_socket);
 		return -1;
 	}
 
 	if (setsockopt_broadcast(s) == -1) {
-		bb_simple_perror_msg("can't enable bcast on raw socket");
+		bb_perror_msg("can't enable bcast on raw socket");
 		goto ret;
 	}
 
@@ -131,6 +132,6 @@ int FAST_FUNC arpping(uint32_t test_nip,
 
  ret:
 	close(s);
-	log1("%srp reply received for this address", rv ? "no a" : "A");
+	log1("%srp reply received for this address", rv ? "No a" : "A");
 	return rv;
 }

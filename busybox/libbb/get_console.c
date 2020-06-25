@@ -7,6 +7,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 /* From <linux/kd.h> */
@@ -62,7 +63,8 @@ int FAST_FUNC get_console_fd_or_die(void)
 		}
 	}
 
-	bb_simple_error_msg_and_die("can't open console");
+	bb_error_msg_and_die("can't open console");
+	/*return fd; - total failure */
 }
 
 /* From <linux/vt.h> */

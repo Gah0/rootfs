@@ -6,6 +6,7 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 void FAST_FUNC bb_do_delay(int seconds)

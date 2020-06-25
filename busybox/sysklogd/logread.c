@@ -8,42 +8,14 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
-//config:config LOGREAD
-//config:	bool "logread (4.8 kb)"
-//config:	default y
-//WRONG: it should be compilable without SYSLOG=y:
-//WRONG:	depends on FEATURE_IPC_SYSLOG
-//config:	help
-//config:	If you enabled Circular Buffer support, you almost
-//config:	certainly want to enable this feature as well. This
-//config:	utility will allow you to read the messages that are
-//config:	stored in the syslogd circular buffer.
-//config:
-//config:config FEATURE_LOGREAD_REDUCED_LOCKING
-//config:	bool "Double buffering"
-//config:	default y
-//config:	depends on LOGREAD
-//config:	help
-//config:	'logread' output to slow serial terminals can have
-//config:	side effects on syslog because of the semaphore.
-//config:	This option make logread to double buffer copy
-//config:	from circular buffer, minimizing semaphore
-//config:	contention at some minor memory expense.
-//config:
-
-//applet:IF_LOGREAD(APPLET(logread, BB_DIR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_LOGREAD) += logread.o
 
 //usage:#define logread_trivial_usage
-//usage:       "[-fF]"
+//usage:       "[-f]"
 //usage:#define logread_full_usage "\n\n"
 //usage:       "Show messages in syslogd's circular buffer\n"
 //usage:     "\n	-f	Output data as log grows"
-//usage:     "\n	-F	Same as -f, but dump buffer first"
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 #include <sys/ipc.h>
 #include <sys/sem.h>
 #include <sys/shm.h>
@@ -69,12 +41,11 @@ struct globals {
 	struct sembuf SMrdn[2]; // {1, 0}, {0, +1, SEM_UNDO}
 	struct shbuf_ds *shbuf;
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
+#define G (*(struct globals*)&bb_common_bufsiz1)
 #define SMrup (G.SMrup)
 #define SMrdn (G.SMrdn)
 #define shbuf (G.shbuf)
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	memcpy(SMrup, init_sem, sizeof(init_sem)); \
 } while (0)
 
@@ -88,7 +59,7 @@ static void error_exit(const char *str)
 }
 #else
 /* On Linux, shmdt is not mandatory on exit */
-# define error_exit(str) bb_simple_perror_msg_and_die(str)
+# define error_exit(str) bb_perror_msg_and_die(str)
 #endif
 
 /*
@@ -112,7 +83,7 @@ int logread_main(int argc UNUSED_PARAM, char **argv)
 	unsigned cur;
 	int log_semid; /* ipc semaphore id */
 	int log_shmid; /* ipc shared memory id */
-	int follow = getopt32(argv, "fF");
+	smallint follow = getopt32(argv, "f");
 
 	INIT_G();
 
@@ -135,7 +106,7 @@ int logread_main(int argc UNUSED_PARAM, char **argv)
 	/* Max possible value for tail is shbuf->size - 1 */
 	cur = shbuf->tail;
 
-	/* Loop for -f or -F, one pass otherwise */
+	/* Loop for logread -f, one pass if there was no -f */
 	do {
 		unsigned shbuf_size;
 		unsigned shbuf_tail;
@@ -158,12 +129,7 @@ int logread_main(int argc UNUSED_PARAM, char **argv)
 			printf("cur:%u tail:%u size:%u\n",
 					cur, shbuf_tail, shbuf_size);
 
-		if (!(follow & 1)) { /* not -f */
-			/* if -F, "convert" it to -f, so that we don't
-			 * dump the entire buffer on each iteration
-			 */
-			follow >>= 1;
-
+		if (!follow) {
 			/* advance to oldest complete message */
 			/* find NUL */
 			cur += strlen(shbuf_data + cur);
@@ -176,7 +142,7 @@ int logread_main(int argc UNUSED_PARAM, char **argv)
 			cur++;
 			if (cur >= shbuf_size) /* last byte in buffer? */
 				cur = 0;
-		} else { /* -f */
+		} else { /* logread -f */
 			if (cur == shbuf_tail) {
 				sem_up(log_semid);
 				fflush_all();

@@ -9,25 +9,24 @@
  * This file can be redistributed under the terms of the GNU General
  * Public License
  */
-//config:config CHATTR
-//config:	bool "chattr (3.8 kb)"
-//config:	default y
-//config:	help
-//config:	chattr changes the file attributes on a second extended file system.
 
-//applet:IF_CHATTR(APPLET_NOEXEC(chattr, chattr, BB_DIR_BIN, BB_SUID_DROP, chattr))
-
-//kbuild:lib-$(CONFIG_CHATTR) += chattr.o e2fs_lib.o
+/*
+ * History:
+ * 93/10/30	- Creation
+ * 93/11/13	- Replace stat() calls by lstat() to avoid loops
+ * 94/02/27	- Integrated in Ted's distribution
+ * 98/12/29	- Ignore symlinks when working recursively (G M Sipe)
+ * 98/12/29	- Display version info only when -V specified (G M Sipe)
+ */
 
 //usage:#define chattr_trivial_usage
-//usage:       "[-R] [-v VERSION] [-+=AacDdijsStTu] FILE..."
+//usage:       "[-R] [-+=AacDdijsStTu] [-v VERSION] [FILE]..."
 //usage:#define chattr_full_usage "\n\n"
-//usage:       "Change ext2 file attributes\n"
-//usage:     "\n	-R	Recurse"
-//usage:     "\n	-v VER	Set version/generation number"
-//-V, -f accepted but ignored
+//usage:       "Change file attributes on an ext2 fs\n"
 //usage:     "\nModifiers:"
-//usage:     "\n	-,+,=	Remove/add/set attributes"
+//usage:     "\n	-	Remove attributes"
+//usage:     "\n	+	Add attributes"
+//usage:     "\n	=	Set attributes"
 //usage:     "\nAttributes:"
 //usage:     "\n	A	Don't track atime"
 //usage:     "\n	a	Append mode only"
@@ -37,9 +36,11 @@
 //usage:     "\n	i	Cannot be modified (immutable)"
 //usage:     "\n	j	Write all data to journal first"
 //usage:     "\n	s	Zero disk storage when deleted"
-//usage:     "\n	S	Write synchronously"
+//usage:     "\n	S	Write file contents synchronously"
 //usage:     "\n	t	Disable tail-merging of partial blocks with other files"
 //usage:     "\n	u	Allow file to be undeleted"
+//usage:     "\n	-R	Recurse"
+//usage:     "\n	-v	Set the file's version/generation number"
 
 #include "libbb.h"
 #include "e2fs_lib.h"
@@ -53,7 +54,7 @@ struct globals {
 	unsigned long version;
 	unsigned long af;
 	unsigned long rf;
-	int flags;
+	smallint flags;
 	smallint recursive;
 };
 
@@ -65,11 +66,10 @@ static unsigned long get_flag(char c)
 	bb_show_usage();
 }
 
-static char** decode_arg(char **argv, struct globals *gp)
+static int decode_arg(const char *arg, struct globals *gp)
 {
 	unsigned long *fl;
-	const char *arg = *argv;
-	char opt = *arg;
+	char opt = *arg++;
 
 	fl = &gp->af;
 	if (opt == '-') {
@@ -77,43 +77,15 @@ static char** decode_arg(char **argv, struct globals *gp)
 		fl = &gp->rf;
 	} else if (opt == '+') {
 		gp->flags |= OPT_ADD;
-	} else { /* if (opt == '=') */
+	} else if (opt == '=') {
 		gp->flags |= OPT_SET;
-	}
+	} else
+		return 0;
 
-	while (*++arg) {
-		if (opt == '-') {
-//e2fsprogs-1.43.1 accepts:
-// "-RRR", "-RRRv VER" and even "-ARRRva VER" and "-vvv V1 V2 V3"
-// but not "-vVER".
-// IOW: options are parsed as part of "remove attrs" strings,
-// if "v" is seen, next argv[] is VER, even if more opts/attrs follow in this argv[]!
-			if (*arg == 'R') {
-				gp->recursive = 1;
-				continue;
-			}
-			if (*arg == 'V') {
-				/*"verbose and print program version" (nop for now) */;
-				continue;
-			}
-			if (*arg == 'f') {
-				/*"suppress most error messages" (nop) */;
-				continue;
-			}
-			if (*arg == 'v') {
-				if (!*++argv)
-					bb_show_usage();
-				gp->version = xatoul(*argv);
-				gp->flags |= OPT_SET_VER;
-				continue;
-			}
-//TODO: "-p PROJECT_NUM" ?
-			/* not a known option, try as an attribute */
-		}
-		*fl |= get_flag(*arg);
-	}
+	while (*arg)
+		*fl |= get_flag(*arg++);
 
-	return argv;
+	return 1;
 }
 
 static void change_attributes(const char *name, struct globals *gp);
@@ -163,7 +135,7 @@ static void change_attributes(const char *name, struct globals *gp)
 			fsflags &= ~gp->rf;
 		/*if (gp->flags & OPT_ADD) - not needed, af is zero otherwise */
 			fsflags |= gp->af;
-// What is this? And why it's not done for SET case?
+		/* What is this? And why it's not done for SET case? */
 		if (!S_ISDIR(st.st_mode))
 			fsflags &= ~EXT2_DIRSYNC_FL;
 	}
@@ -179,28 +151,42 @@ int chattr_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int chattr_main(int argc UNUSED_PARAM, char **argv)
 {
 	struct globals g;
+	char *arg;
 
 	memset(&g, 0, sizeof(g));
 
 	/* parse the args */
-	for (;;) {
-		char *arg = *++argv;
-		if (!arg)
-			bb_show_usage();
-		if (arg[0] != '-' && arg[0] != '+' && arg[0] != '=')
-			break;
+	while ((arg = *++argv)) {
+		/* take care of -R and -v <version> */
+		if (arg[0] == '-'
+		 && (arg[1] == 'R' || arg[1] == 'v')
+		 && !arg[2]
+		) {
+			if (arg[1] == 'R') {
+				g.recursive = 1;
+				continue;
+			}
+			/* arg[1] == 'v' */
+			if (!*++argv)
+				bb_show_usage();
+			g.version = xatoul(*argv);
+			g.flags |= OPT_SET_VER;
+			continue;
+		}
 
-		argv = decode_arg(argv, &g);
+		if (!decode_arg(arg, &g))
+			break;
 	}
-	/* note: on loop exit, remaining argv[] is never empty */
 
 	/* run sanity checks on all the arguments given us */
+	if (!*argv)
+		bb_show_usage();
 	if ((g.flags & OPT_SET) && (g.flags & (OPT_ADD|OPT_REM)))
-		bb_simple_error_msg_and_die("= is incompatible with - and +");
+		bb_error_msg_and_die("= is incompatible with - and +");
 	if (g.rf & g.af)
-		bb_simple_error_msg_and_die("can't set and unset a flag");
+		bb_error_msg_and_die("can't set and unset a flag");
 	if (!g.flags)
-		bb_simple_error_msg_and_die("must use '-v', =, - or +");
+		bb_error_msg_and_die("must use '-v', =, - or +");
 
 	/* now run chattr on all the files passed to us */
 	do change_attributes(*argv, &g); while (*++argv);

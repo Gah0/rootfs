@@ -8,6 +8,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 
@@ -120,11 +121,11 @@ void FAST_FUNC free_procps_scan(procps_status_t* sp)
 }
 
 #if ENABLE_FEATURE_TOPMEM || ENABLE_PMAP
-static unsigned long long fast_strtoull_16(char **endptr)
+static unsigned long fast_strtoul_16(char **endptr)
 {
 	unsigned char c;
 	char *str = *endptr;
-	unsigned long long n = 0;
+	unsigned long n = 0;
 
 	/* Need to stop on both ' ' and '\n' */
 	while ((c = *str++) > ' ') {
@@ -204,11 +205,11 @@ int FAST_FUNC procps_read_smaps(pid_t pid, struct smaprec *total,
 		// Rss:                 nnn kB
 		// .....
 
-		char *tp, *p;
+		char *tp = buf, *p;
 
 #define SCAN(S, X) \
-		if ((tp = is_prefixed_with(buf, S)) != NULL) {       \
-			tp = skip_whitespace(tp);                    \
+		if (strncmp(tp, S, sizeof(S)-1) == 0) {              \
+			tp = skip_whitespace(tp + sizeof(S)-1);      \
 			total->X += currec.X = fast_strtoul_10(&tp); \
 			continue;                                    \
 		}
@@ -238,15 +239,15 @@ int FAST_FUNC procps_read_smaps(pid_t pid, struct smaprec *total,
 
 			*tp = ' ';
 			tp = buf;
-			currec.smap_start = fast_strtoull_16(&tp);
-			currec.smap_size = (fast_strtoull_16(&tp) - currec.smap_start) >> 10;
+			currec.smap_start = fast_strtoul_16(&tp);
+			currec.smap_size = (fast_strtoul_16(&tp) - currec.smap_start) >> 10;
 
 			strncpy(currec.smap_mode, tp, sizeof(currec.smap_mode)-1);
 
 			// skipping "rw-s FILEOFS M:m INODE "
 			tp = skip_whitespace(skip_fields(tp, 4));
 			// filter out /dev/something (something != zero)
-			if (!is_prefixed_with(tp, "/dev/") || strcmp(tp, "/dev/zero\n") == 0) {
+			if (strncmp(tp, "/dev/", 5) != 0 || strcmp(tp, "/dev/zero\n") == 0) {
 				if (currec.smap_mode[1] == 'w') {
 					currec.mapped_rw = currec.smap_size;
 					total->mapped_rw += currec.smap_size;
@@ -282,6 +283,7 @@ int FAST_FUNC procps_read_smaps(pid_t pid, struct smaprec *total,
 }
 #endif
 
+void BUG_comm_size(void);
 procps_status_t* FAST_FUNC procps_scan(procps_status_t* sp, int flags)
 {
 	if (!sp)
@@ -369,7 +371,6 @@ procps_status_t* FAST_FUNC procps_scan(procps_status_t* sp, int flags)
 			| PSSCAN_TTY | PSSCAN_NICE
 			| PSSCAN_CPU)
 		) {
-			int s_idx;
 			char *cp, *comm1;
 			int tty;
 #if !ENABLE_FEATURE_FAST_TOP
@@ -384,7 +385,8 @@ procps_status_t* FAST_FUNC procps_scan(procps_status_t* sp, int flags)
 			/*if (!cp || cp[1] != ' ')
 				continue;*/
 			cp[0] = '\0';
-			BUILD_BUG_ON(sizeof(sp->comm) < 16);
+			if (sizeof(sp->comm) < 16)
+				BUG_comm_size();
 			comm1 = strchr(buf, '(');
 			/*if (comm1)*/
 				safe_strncpy(sp->comm, comm1 + 1, sizeof(sp->comm));
@@ -468,20 +470,17 @@ procps_status_t* FAST_FUNC procps_scan(procps_status_t* sp, int flags)
 #if ENABLE_FEATURE_PS_ADDITIONAL_COLUMNS
 			sp->niceness = tasknice;
 #endif
-			sp->state[1] = ' ';
-			sp->state[2] = ' ';
-			s_idx = 1;
-			if (sp->vsz == 0 && sp->state[0] != 'Z') {
-				/* not sure what the purpose of this flag */
+
+			if (sp->vsz == 0 && sp->state[0] != 'Z')
 				sp->state[1] = 'W';
-				s_idx = 2;
-			}
-			if (tasknice != 0) {
-				if (tasknice < 0)
-					sp->state[s_idx] = '<';
-				else /* > 0 */
-					sp->state[s_idx] = 'N';
-			}
+			else
+				sp->state[1] = ' ';
+			if (tasknice < 0)
+				sp->state[2] = '<';
+			else if (tasknice) /* > 0 */
+				sp->state[2] = 'N';
+			else
+				sp->state[2] = ' ';
 		}
 
 #if ENABLE_FEATURE_TOPMEM
@@ -498,8 +497,8 @@ procps_status_t* FAST_FUNC procps_scan(procps_status_t* sp, int flags)
 				while (fgets(buf, sizeof(buf), file)) {
 					char *tp;
 #define SCAN_TWO(str, name, statement) \
-	if ((tp = is_prefixed_with(buf, str)) != NULL) { \
-		tp = skip_whitespace(tp); \
+	if (strncmp(buf, str, sizeof(str)-1) == 0) { \
+		tp = skip_whitespace(buf + sizeof(str)-1); \
 		sscanf(tp, "%u", &sp->name); \
 		statement; \
 	}
@@ -555,7 +554,8 @@ procps_status_t* FAST_FUNC procps_scan(procps_status_t* sp, int flags)
 				break;
 			if (flags & PSSCAN_ARGVN) {
 				sp->argv_len = n;
-				sp->argv0 = xmemdup(buf, n + 1);
+				sp->argv0 = xmalloc(n + 1);
+				memcpy(sp->argv0, buf, n + 1);
 				/* sp->argv0[n] = '\0'; - buf has it */
 			} else {
 				sp->argv_len = 0;
@@ -591,14 +591,12 @@ void FAST_FUNC read_cmdline(char *buf, int col, unsigned pid, const char *comm)
 				buf[sz] = ' ';
 			sz--;
 		}
-		if (base[0] == '-') /* "-sh" (login shell)? */
-			base++;
 
 		/* If comm differs from argv0, prepend "{comm} ".
 		 * It allows to see thread names set by prctl(PR_SET_NAME).
 		 */
-		if (!comm)
-			return;
+		if (base[0] == '-') /* "-sh" (login shell)? */
+			base++;
 		comm_len = strlen(comm);
 		/* Why compare up to comm_len, not COMM_LEN-1?
 		 * Well, some processes rewrite argv, and use _spaces_ there
@@ -616,8 +614,9 @@ void FAST_FUNC read_cmdline(char *buf, int col, unsigned pid, const char *comm)
 			buf[comm_len - 1] = ' ';
 			buf[col - 1] = '\0';
 		}
+
 	} else {
-		snprintf(buf, col, "[%s]", comm ? comm : "?");
+		snprintf(buf, col, "[%s]", comm);
 	}
 }
 

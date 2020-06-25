@@ -18,7 +18,7 @@
  *    may be used to endorse or promote products derived from this software
  *    without specific prior written permission.
  *
- * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ''AS IS'' AND
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
  * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
  * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
  * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
@@ -366,11 +366,10 @@ bsd_select(void)
 			}
 				printf("Reading disklabel of %s at sector %u\n",
 					partname(disk_device, t+1, 0), ss + BSD_LABELSECTOR);
-			if (xbsd_readlabel(xbsd_part) == 0) {
+			if (xbsd_readlabel(xbsd_part) == 0)
 				if (xbsd_create_disklabel() == 0)
 					return;
 				break;
-			}
 		}
 	}
 
@@ -470,7 +469,7 @@ xbsd_new_part(void)
 	end = xbsd_dlabel.d_secperunit - 1;
 #endif
 
-	snprintf(mesg, sizeof(mesg), "First %s", str_units());
+	snprintf(mesg, sizeof(mesg), "First %s", str_units(SINGULAR));
 	begin = read_int(bsd_cround(begin), bsd_cround(begin), bsd_cround(end),
 		0, mesg);
 
@@ -478,7 +477,7 @@ xbsd_new_part(void)
 		begin = (begin - 1) * xbsd_dlabel.d_secpercyl;
 
 	snprintf(mesg, sizeof(mesg), "Last %s or +size or +sizeM or +sizeK",
-		str_units());
+		str_units(SINGULAR));
 	end = read_int(bsd_cround(begin), bsd_cround(end), bsd_cround(end),
 		bsd_cround(begin), mesg);
 
@@ -709,9 +708,6 @@ sync_disks(void)
 static void
 xbsd_write_bootstrap(void)
 {
-#ifndef MAXPATHLEN
-# define MAXPATHLEN 1024
-#endif
 	char path[MAXPATHLEN];
 	const char *bootdir = BSD_LINUX_BOOTDIR;
 	const char *dkbasename;
@@ -858,7 +854,7 @@ xbsd_initlabel(struct partition *p)
 
 	d->d_magic = BSD_DISKMAGIC;
 
-	if (is_prefixed_with(disk_device, "/dev/sd"))
+	if (strncmp(disk_device, "/dev/sd", 7) == 0)
 		d->d_type = BSD_DTYPE_SCSI;
 	else
 		d->d_type = BSD_DTYPE_ST506;

@@ -7,87 +7,73 @@
  *
  * Licensed under GPLv2, see file LICENSE in this source tree.
  */
+
 //config:config MDEV
-//config:	bool "mdev (17 kb)"
+//config:	bool "mdev"
 //config:	default y
 //config:	select PLATFORM_LINUX
 //config:	help
-//config:	mdev is a mini-udev implementation for dynamically creating device
-//config:	nodes in the /dev directory.
+//config:	  mdev is a mini-udev implementation for dynamically creating device
+//config:	  nodes in the /dev directory.
 //config:
-//config:	For more information, please see docs/mdev.txt
+//config:	  For more information, please see docs/mdev.txt
 //config:
 //config:config FEATURE_MDEV_CONF
 //config:	bool "Support /etc/mdev.conf"
 //config:	default y
 //config:	depends on MDEV
 //config:	help
-//config:	Add support for the mdev config file to control ownership and
-//config:	permissions of the device nodes.
+//config:	  Add support for the mdev config file to control ownership and
+//config:	  permissions of the device nodes.
 //config:
-//config:	For more information, please see docs/mdev.txt
+//config:	  For more information, please see docs/mdev.txt
 //config:
 //config:config FEATURE_MDEV_RENAME
 //config:	bool "Support subdirs/symlinks"
 //config:	default y
 //config:	depends on FEATURE_MDEV_CONF
 //config:	help
-//config:	Add support for renaming devices and creating symlinks.
+//config:	  Add support for renaming devices and creating symlinks.
 //config:
-//config:	For more information, please see docs/mdev.txt
+//config:	  For more information, please see docs/mdev.txt
 //config:
 //config:config FEATURE_MDEV_RENAME_REGEXP
 //config:	bool "Support regular expressions substitutions when renaming device"
 //config:	default y
 //config:	depends on FEATURE_MDEV_RENAME
 //config:	help
-//config:	Add support for regular expressions substitutions when renaming
-//config:	device.
+//config:	  Add support for regular expressions substitutions when renaming
+//config:	  device.
 //config:
 //config:config FEATURE_MDEV_EXEC
 //config:	bool "Support command execution at device addition/removal"
 //config:	default y
 //config:	depends on FEATURE_MDEV_CONF
 //config:	help
-//config:	This adds support for an optional field to /etc/mdev.conf for
-//config:	executing commands when devices are created/removed.
+//config:	  This adds support for an optional field to /etc/mdev.conf for
+//config:	  executing commands when devices are created/removed.
 //config:
-//config:	For more information, please see docs/mdev.txt
+//config:	  For more information, please see docs/mdev.txt
 //config:
 //config:config FEATURE_MDEV_LOAD_FIRMWARE
-//config:	bool "Support loading of firmware"
+//config:	bool "Support loading of firmwares"
 //config:	default y
 //config:	depends on MDEV
 //config:	help
-//config:	Some devices need to load firmware before they can be usable.
+//config:	  Some devices need to load firmware before they can be usable.
 //config:
-//config:	These devices will request userspace look up the files in
-//config:	/lib/firmware/ and if it exists, send it to the kernel for
-//config:	loading into the hardware.
-//config:
-//config:config FEATURE_MDEV_DAEMON
-//config:	bool "Support daemon mode"
-//config:	default y
-//config:	depends on MDEV
-//config:	help
-//config:	Adds the -d option to run mdev in daemon mode handling hotplug
-//config:	events from the kernel like udev. If the system generates many
-//config:	hotplug events this mode of operation will consume less
-//config:	resources than registering mdev as hotplug helper or using the
-//config:	uevent applet.
+//config:	  These devices will request userspace look up the files in
+//config:	  /lib/firmware/ and if it exists, send it to the kernel for
+//config:	  loading into the hardware.
 
 //applet:IF_MDEV(APPLET(mdev, BB_DIR_SBIN, BB_SUID_DROP))
 
 //kbuild:lib-$(CONFIG_MDEV) += mdev.o
 
 //usage:#define mdev_trivial_usage
-//usage:       "[-s]" IF_FEATURE_MDEV_DAEMON(" | [-df]")
+//usage:       "[-s]"
 //usage:#define mdev_full_usage "\n\n"
 //usage:       "mdev -s is to be run during boot to scan /sys and populate /dev.\n"
-//usage:	IF_FEATURE_MDEV_DAEMON(
-//usage:       "mdev -d[f]: daemon, listen on netlink.\n"
-//usage:       "	-f: stay in foreground.\n"
-//usage:	)
 //usage:       "\n"
 //usage:       "Bare mdev is a kernel hotplug helper. To activate it:\n"
 //usage:       "	echo /sbin/mdev >/proc/sys/kernel/hotplug\n"
@@ -111,9 +97,7 @@
 //usage:       "If /dev/mdev.log file exists, debug log will be appended to it."
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 #include "xregex.h"
-#include <linux/netlink.h>
 
 /* "mdev -s" scans /sys/class/xxx, looking for directories which have dev
  * file (it is of the form "M:m\n"). Example: /sys/class/tty/tty0/dev
@@ -250,30 +234,21 @@
 
 #if DEBUG_LVL >= 1
 # define dbg1(...) do { if (G.verbose) bb_error_msg(__VA_ARGS__); } while(0)
-# define dbg1s(msg) do { if (G.verbose) bb_simple_error_msg(msg); } while(0)
 #else
 # define dbg1(...) ((void)0)
-# define dbg1s(msg) ((void)0)
 #endif
 #if DEBUG_LVL >= 2
 # define dbg2(...) do { if (G.verbose >= 2) bb_error_msg(__VA_ARGS__); } while(0)
-# define dbg2s(msg) do { if (G.verbose >= 2) bb_simple_error_msg(msg); } while(0)
 #else
 # define dbg2(...) ((void)0)
-# define dbg2s(msg) ((void)0)
 #endif
 #if DEBUG_LVL >= 3
 # define dbg3(...) do { if (G.verbose >= 3) bb_error_msg(__VA_ARGS__); } while(0)
-# define dbg3s(msg) do { if (G.verbose >= 3) bb_simple_error_msg(msg); } while(0)
 #else
 # define dbg3(...) ((void)0)
-# define dbg3s(msg) ((void)0)
 #endif
 
 
-#ifndef SO_RCVBUFFORCE
-#define SO_RCVBUFFORCE 33
-#endif
 static const char keywords[] ALIGN1 = "add\0remove\0"; // "change\0"
 enum { OP_add, OP_remove };
 
@@ -308,11 +283,10 @@ struct globals {
 	unsigned rule_idx;
 #endif
 	struct rule cur_rule;
-	char timestr[sizeof("HH:MM:SS.123456")];
+	char timestr[sizeof("60.123456")];
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
+#define G (*(struct globals*)&bb_common_bufsiz1)
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	IF_NOT_FEATURE_MDEV_CONF(G.cur_rule.maj = -1;) \
 	IF_NOT_FEATURE_MDEV_CONF(G.cur_rule.mode = 0660;) \
 } while (0)
@@ -426,13 +400,13 @@ static void parse_next_rule(void)
 		}
 
 		/* 2nd field: uid:gid - device ownership */
-		if (get_uidgid(&G.cur_rule.ugid, tokens[1]) == 0) {
+		if (get_uidgid(&G.cur_rule.ugid, tokens[1], /*allow_numeric:*/ 1) == 0) {
 			bb_error_msg("unknown user/group '%s' on line %d", tokens[1], G.parser->lineno);
 			goto next_rule;
 		}
 
 		/* 3rd field: mode - device permissions */
-		G.cur_rule.mode = bb_parse_mode(tokens[2], G.cur_rule.mode);
+		bb_parse_mode(tokens[2], &G.cur_rule.mode);
 
 		/* 4th field (opt): ">|=alias" or "!" to not create the node */
 		val = tokens[3];
@@ -497,7 +471,7 @@ static const struct rule *next_rule(void)
 	if (G.parser) {
 		parse_next_rule();
 		if (G.rule_vec) { /* mdev -s */
-			rule = xmemdup(&G.cur_rule, sizeof(G.cur_rule));
+			rule = memcpy(xmalloc(sizeof(G.cur_rule)), &G.cur_rule, sizeof(G.cur_rule));
 			G.rule_vec = xrealloc_vector(G.rule_vec, 4, G.rule_idx);
 			G.rule_vec[G.rule_idx++] = rule;
 			dbg3("> G.rule_vec[G.rule_idx:%d]=%p", G.rule_idx, G.rule_vec[G.rule_idx]);
@@ -567,7 +541,8 @@ static char *build_alias(char *alias, const char *device_name)
 
 /* mknod in /dev based on a path like "/sys/block/hda/hda1"
  * NB1: path parameter needs to have SCRATCH_SIZE scratch bytes
- * after NUL, but we promise to not mangle it (IOW: to restore NUL if needed).
+ * after NUL, but we promise to not mangle (IOW: to restore NUL if needed)
+ * path string.
  * NB2: "mdev -s" may call us many times, do not leak memory/fds!
  *
  * device_name = $DEVNAME (may be NULL)
@@ -635,7 +610,7 @@ static void make_device(char *device_name, char *path, int operation)
 	 * We use strstr("/block/") to forestall future surprises.
 	 */
 	type = S_IFCHR;
-	if (strstr(path, "/block/") || (G.subsystem && is_prefixed_with(G.subsystem, "block")))
+	if (strstr(path, "/block/") || (G.subsystem && strncmp(G.subsystem, "block", 5) == 0))
 		type = S_IFBLK;
 
 #if ENABLE_FEATURE_MDEV_CONF
@@ -833,57 +808,22 @@ static void make_device(char *device_name, char *path, int operation)
 	} /* for (;;) */
 }
 
-static ssize_t readlink2(char *buf, size_t bufsize)
-{
-	// Grr... gcc 8.1.1:
-	// "passing argument 2 to restrict-qualified parameter aliases with argument 1"
-	// dance around that...
-	char *obuf FIX_ALIASING;
-	obuf = buf;
-	return readlink(buf, obuf, bufsize);
-}
-
-/* File callback for /sys/ traversal.
- * We act only on "/sys/.../dev" (pseudo)file
- */
+/* File callback for /sys/ traversal */
 static int FAST_FUNC fileAction(const char *fileName,
 		struct stat *statbuf UNUSED_PARAM,
 		void *userData,
 		int depth UNUSED_PARAM)
 {
 	size_t len = strlen(fileName) - 4; /* can't underflow */
-	char *path = userData;	/* char array[PATH_MAX + SCRATCH_SIZE] */
-	char subsys[PATH_MAX];
-	int res;
+	char *scratch = userData;
 
-	/* Is it a ".../dev" file? (len check is for paranoid reasons) */
-	if (strcmp(fileName + len, "/dev") != 0 || len >= PATH_MAX - 32)
-		return FALSE; /* not .../dev */
+	/* len check is for paranoid reasons */
+	if (strcmp(fileName + len, "/dev") != 0 || len >= PATH_MAX)
+		return FALSE;
 
-	strcpy(path, fileName);
-	path[len] = '\0';
-
-	/* Read ".../subsystem" symlink in the same directory where ".../dev" is */
-	strcpy(subsys, path);
-	strcpy(subsys + len, "/subsystem");
-	res = readlink2(subsys, sizeof(subsys)-1);
-	if (res > 0) {
-		subsys[res] = '\0';
-		free(G.subsystem);
-		if (G.subsys_env) {
-			bb_unsetenv_and_free(G.subsys_env);
-			G.subsys_env = NULL;
-		}
-		/* Set G.subsystem and $SUBSYSTEM from symlink's last component */
-		G.subsystem = strrchr(subsys, '/');
-		if (G.subsystem) {
-			G.subsystem = xstrdup(G.subsystem + 1);
-			G.subsys_env = xasprintf("%s=%s", "SUBSYSTEM", G.subsystem);
-			putenv(G.subsys_env);
-		}
-	}
-
-	make_device(/*DEVNAME:*/ NULL, path, OP_add);
+	strcpy(scratch, fileName);
+	scratch[len] = '\0';
+	make_device(/*DEVNAME:*/ NULL, scratch, OP_add);
 
 	return TRUE;
 }
@@ -894,6 +834,22 @@ static int FAST_FUNC dirAction(const char *fileName UNUSED_PARAM,
 		void *userData UNUSED_PARAM,
 		int depth)
 {
+	/* Extract device subsystem -- the name of the directory
+	 * under /sys/class/ */
+	if (1 == depth) {
+		free(G.subsystem);
+		if (G.subsys_env) {
+			bb_unsetenv_and_free(G.subsys_env);
+			G.subsys_env = NULL;
+		}
+		G.subsystem = strrchr(fileName, '/');
+		if (G.subsystem) {
+			G.subsystem = xstrdup(G.subsystem + 1);
+			G.subsys_env = xasprintf("%s=%s", "SUBSYSTEM", G.subsystem);
+			putenv(G.subsys_env);
+		}
+	}
+
 	return (depth >= MAX_SYSFS_DEPTH ? SKIP : TRUE);
 }
 
@@ -914,9 +870,8 @@ static void load_firmware(const char *firmware, const char *sysfs_path)
 	int firmware_fd, loading_fd;
 
 	/* check for /lib/firmware/$FIRMWARE */
-	firmware_fd = -1;
-	if (chdir("/lib/firmware") == 0)
-		firmware_fd = open(firmware, O_RDONLY); /* can fail */
+	xchdir("/lib/firmware");
+	firmware_fd = open(firmware, O_RDONLY); /* can fail */
 
 	/* check for /sys/$DEVPATH/loading ... give 30 seconds to appear */
 	xchdir(sysfs_path);
@@ -968,11 +923,7 @@ static char *curtime(void)
 {
 	struct timeval tv;
 	gettimeofday(&tv, NULL);
-	sprintf(
-		strftime_HHMMSS(G.timestr, sizeof(G.timestr), &tv.tv_sec),
-		".%06u",
-		(unsigned)tv.tv_usec
-	);
+	sprintf(G.timestr, "%u.%06u", (unsigned)tv.tv_sec % 60, (unsigned)tv.tv_usec);
 	return G.timestr;
 }
 
@@ -992,7 +943,7 @@ static void open_mdev_log(const char *seq, unsigned my_pid)
  * Active mdev pokes us with SIGCHLD to check the new file.
  */
 static int
-wait_for_seqfile(unsigned expected_seq)
+wait_for_seqfile(const char *seq)
 {
 	/* We time out after 2 sec */
 	static const struct timespec ts = { 0, 32*1000*1000 };
@@ -1007,14 +958,12 @@ wait_for_seqfile(unsigned expected_seq)
 
 	for (;;) {
 		int seqlen;
-		char seqbuf[sizeof(long)*3 + 2];
-		unsigned seqbufnum;
+		char seqbuf[sizeof(int)*3 + 2];
 
 		if (seq_fd < 0) {
 			seq_fd = open("mdev.seq", O_RDWR);
 			if (seq_fd < 0)
 				break;
-			close_on_exec_on(seq_fd);
 		}
 		seqlen = pread(seq_fd, seqbuf, sizeof(seqbuf) - 1, 0);
 		if (seqlen < 0) {
@@ -1025,25 +974,17 @@ wait_for_seqfile(unsigned expected_seq)
 		seqbuf[seqlen] = '\0';
 		if (seqbuf[0] == '\n' || seqbuf[0] == '\0') {
 			/* seed file: write out seq ASAP */
-			xwrite_str(seq_fd, utoa(expected_seq));
+			xwrite_str(seq_fd, seq);
 			xlseek(seq_fd, 0, SEEK_SET);
-			dbg2s("first seq written");
+			dbg2("first seq written");
 			break;
 		}
-		seqbufnum = atoll(seqbuf);
-		if (seqbufnum == expected_seq) {
+		if (strcmp(seq, seqbuf) == 0) {
 			/* correct idx */
 			break;
 		}
-		if (seqbufnum > expected_seq) {
-			/* a later mdev runs already (this was seen by users to happen) */
-			/* do not overwrite seqfile on exit */
-			close(seq_fd);
-			seq_fd = -1;
-			break;
-		}
 		if (do_once) {
-			dbg2("%s mdev.seq='%s', need '%u'", curtime(), seqbuf, expected_seq);
+			dbg2("%s waiting for '%s'", curtime(), seqbuf);
 			do_once = 0;
 		}
 		if (sigtimedwait(&set_CHLD, NULL, &ts) >= 0) {
@@ -1051,7 +992,7 @@ wait_for_seqfile(unsigned expected_seq)
 			continue; /* don't decrement timeout! */
 		}
 		if (--timeout == 0) {
-			dbg1("%s mdev.seq='%s'", "timed out", seqbuf);
+			dbg1("%s waiting for '%s'", "timed out", seqbuf);
 			break;
 		}
 	}
@@ -1072,140 +1013,16 @@ static void signal_mdevs(unsigned my_pid)
 	}
 }
 
-static void process_action(char *temp, unsigned my_pid)
-{
-	char *fw;
-	char *seq;
-	char *action;
-	char *env_devname;
-	char *env_devpath;
-	unsigned seqnum = seqnum; /* for compiler */
-	int seq_fd;
-	smalluint op;
-
-	/* Hotplug:
-	 * env ACTION=... DEVPATH=... SUBSYSTEM=... [SEQNUM=...] mdev
-	 * ACTION can be "add", "remove", "change"
-	 * DEVPATH is like "/block/sda" or "/class/input/mice"
-	 */
-	env_devname = getenv("DEVNAME"); /* can be NULL */
-	G.subsystem = getenv("SUBSYSTEM");
-	action = getenv("ACTION");
-	env_devpath = getenv("DEVPATH");
-	if (!action || !env_devpath /*|| !G.subsystem*/)
-		bb_show_usage();
-	fw = getenv("FIRMWARE");
-	seq = getenv("SEQNUM");
-	op = index_in_strings(keywords, action);
-
-	if (my_pid)
-		open_mdev_log(seq, my_pid);
-
-	seq_fd = -1;
-	if (my_pid && seq) {
-		seqnum = atoll(seq);
-		seq_fd = wait_for_seqfile(seqnum);
-	}
-
-	dbg1("%s "
-		"ACTION:%s SEQNUM:%s SUBSYSTEM:%s DEVNAME:%s DEVPATH:%s"
-		"%s%s",
-		curtime(),
-		action, seq, G.subsystem, env_devname, env_devpath,
-		fw ? " FW:" : "", fw ? fw : ""
-	);
-
-	snprintf(temp, PATH_MAX, "/sys%s", env_devpath);
-	if (op == OP_remove) {
-		/* Ignoring "remove firmware". It was reported
-		 * to happen and to cause erroneous deletion
-		 * of device nodes. */
-		if (!fw)
-			make_device(env_devname, temp, op);
-	}
-	else {
-		make_device(env_devname, temp, op);
-		if (ENABLE_FEATURE_MDEV_LOAD_FIRMWARE) {
-			if (op == OP_add && fw)
-				load_firmware(fw, temp);
-		}
-	}
-
-	if (seq_fd >= 0) {
-		xwrite_str(seq_fd, utoa(seqnum + 1));
-		signal_mdevs(my_pid);
-	}
-}
-
-static void initial_scan(char *temp)
-{
-	struct stat st;
-
-	xstat("/", &st);
-	G.root_major = major(st.st_dev);
-	G.root_minor = minor(st.st_dev);
-
-	putenv((char*)"ACTION=add");
-
-	/* Create all devices from /sys/dev hierarchy */
-	recursive_action("/sys/dev",
-			 ACTION_RECURSE | ACTION_FOLLOWLINKS,
-			 fileAction, dirAction, temp, 0);
-}
-
-#if ENABLE_FEATURE_MDEV_DAEMON
-
-/* uevent applet uses 16k buffer, and mmaps it before every read */
-# define BUFFER_SIZE (2 * 1024)
-# define RCVBUF (2 * 1024 * 1024)
-# define MAX_ENV 32
-
-static void daemon_loop(char *temp, int fd)
-{
-	for (;;) {
-		char netbuf[BUFFER_SIZE];
-		char *env[MAX_ENV];
-		char *s, *end;
-		ssize_t len;
-		int idx;
-
-		len = safe_read(fd, netbuf, sizeof(netbuf) - 1);
-		if (len < 0) {
-			bb_simple_perror_msg_and_die("read");
-		}
-		end = netbuf + len;
-		*end = '\0';
-
-		idx = 0;
-		s = netbuf;
-		while (s < end && idx < MAX_ENV) {
-			if (endofname(s)[0] == '=') {
-				env[idx++] = s;
-				putenv(s);
-			}
-			s += strlen(s) + 1;
-		}
-
-		process_action(temp, 0);
-
-		while (idx)
-			bb_unsetenv(env[--idx]);
-	}
-}
-#endif
-
 int mdev_main(int argc, char **argv) MAIN_EXTERNALLY_VISIBLE;
 int mdev_main(int argc UNUSED_PARAM, char **argv)
 {
-	enum {
-		MDEV_OPT_SCAN       = 1 << 0,
-		MDEV_OPT_DAEMON     = 1 << 1,
-		MDEV_OPT_FOREGROUND = 1 << 2,
-	};
-	int opt;
 	RESERVE_CONFIG_BUFFER(temp, PATH_MAX + SCRATCH_SIZE);
 
 	INIT_G();
+
+#if ENABLE_FEATURE_MDEV_CONF
+	G.filename = "/etc/mdev.conf";
+#endif
 
 	/* We can be called as hotplug helper */
 	/* Kernel cannot provide suitable stdio fds for us, do it ourself */
@@ -1216,55 +1033,100 @@ int mdev_main(int argc UNUSED_PARAM, char **argv)
 
 	xchdir("/dev");
 
-	opt = getopt32(argv, "s" IF_FEATURE_MDEV_DAEMON("df"));
-
-#if ENABLE_FEATURE_MDEV_CONF
-	G.filename = "/etc/mdev.conf";
-	if (opt & (MDEV_OPT_SCAN|MDEV_OPT_DAEMON)) {
-		/* Same as xrealloc_vector(NULL, 4, 0): */
-		G.rule_vec = xzalloc((1 << 4) * sizeof(*G.rule_vec));
-	}
-#endif
-
-#if ENABLE_FEATURE_MDEV_DAEMON
-	if (opt & MDEV_OPT_DAEMON) {
-		/*
-		 * Daemon mode listening on uevent netlink socket.
-		 */
-		int fd;
-
-		/* Subscribe for UEVENT kernel messages */
-		/* Without a sufficiently big RCVBUF, a ton of simultaneous events
-		 * can trigger ENOBUFS on read, which is unrecoverable.
-		 * Reproducer:
-		 *	mdev -d
-		 *	find /sys -name uevent -exec sh -c 'echo add >"{}"' ';'
-		 */
-		fd = create_and_bind_to_netlink(NETLINK_KOBJECT_UEVENT, 1 << 0, RCVBUF);
-
-		/*
-		 * Make inital scan after the uevent socket is alive and
-		 * _before_ we fork away.
-		 */
-		initial_scan(temp);
-
-		if (!(opt & MDEV_OPT_FOREGROUND))
-			bb_daemonize_or_rexec(0, argv);
-
-		open_mdev_log(NULL, getpid());
-
-		daemon_loop(temp, fd);
-	}
-#endif
-	if (opt & MDEV_OPT_SCAN) {
+	if (argv[1] && strcmp(argv[1], "-s") == 0) {
 		/*
 		 * Scan: mdev -s
 		 */
-		initial_scan(temp);
+		struct stat st;
+
+#if ENABLE_FEATURE_MDEV_CONF
+		/* Same as xrealloc_vector(NULL, 4, 0): */
+		G.rule_vec = xzalloc((1 << 4) * sizeof(*G.rule_vec));
+#endif
+		xstat("/", &st);
+		G.root_major = major(st.st_dev);
+		G.root_minor = minor(st.st_dev);
+
+		putenv((char*)"ACTION=add");
+
+		/* ACTION_FOLLOWLINKS is needed since in newer kernels
+		 * /sys/block/loop* (for example) are symlinks to dirs,
+		 * not real directories.
+		 * (kernel's CONFIG_SYSFS_DEPRECATED makes them real dirs,
+		 * but we can't enforce that on users)
+		 */
+		if (access("/sys/class/block", F_OK) != 0) {
+			/* Scan obsolete /sys/block only if /sys/class/block
+			 * doesn't exist. Otherwise we'll have dupes.
+			 * Also, do not complain if it doesn't exist.
+			 * Some people configure kernel to have no blockdevs.
+			 */
+			recursive_action("/sys/block",
+				ACTION_RECURSE | ACTION_FOLLOWLINKS | ACTION_QUIET,
+				fileAction, dirAction, temp, 0);
+		}
+		recursive_action("/sys/class",
+			ACTION_RECURSE | ACTION_FOLLOWLINKS,
+			fileAction, dirAction, temp, 0);
 	} else {
-		process_action(temp, getpid());
+		char *fw;
+		char *seq;
+		char *action;
+		char *env_devname;
+		char *env_devpath;
+		unsigned my_pid;
+		int seq_fd;
+		smalluint op;
+
+		/* Hotplug:
+		 * env ACTION=... DEVPATH=... SUBSYSTEM=... [SEQNUM=...] mdev
+		 * ACTION can be "add", "remove", "change"
+		 * DEVPATH is like "/block/sda" or "/class/input/mice"
+		 */
+		env_devname = getenv("DEVNAME"); /* can be NULL */
+		G.subsystem = getenv("SUBSYSTEM");
+		action = getenv("ACTION");
+		env_devpath = getenv("DEVPATH");
+		if (!action || !env_devpath /*|| !G.subsystem*/)
+			bb_show_usage();
+		fw = getenv("FIRMWARE");
+		seq = getenv("SEQNUM");
+		op = index_in_strings(keywords, action);
+
+		my_pid = getpid();
+		open_mdev_log(seq, my_pid);
+
+		seq_fd = seq ? wait_for_seqfile(seq) : -1;
+
+		dbg1("%s "
+			"ACTION:%s SUBSYSTEM:%s DEVNAME:%s DEVPATH:%s"
+			"%s%s",
+			curtime(),
+			action, G.subsystem, env_devname, env_devpath,
+			fw ? " FW:" : "", fw ? fw : ""
+		);
+
+		snprintf(temp, PATH_MAX, "/sys%s", env_devpath);
+		if (op == OP_remove) {
+			/* Ignoring "remove firmware". It was reported
+			 * to happen and to cause erroneous deletion
+			 * of device nodes. */
+			if (!fw)
+				make_device(env_devname, temp, op);
+		}
+		else {
+			make_device(env_devname, temp, op);
+			if (ENABLE_FEATURE_MDEV_LOAD_FIRMWARE) {
+				if (op == OP_add && fw)
+					load_firmware(fw, temp);
+			}
+		}
 
 		dbg1("%s exiting", curtime());
+		if (seq_fd >= 0) {
+			xwrite_str(seq_fd, utoa(xatou(seq) + 1));
+			signal_mdevs(my_pid);
+		}
 	}
 
 	if (ENABLE_FEATURE_CLEAN_UP)

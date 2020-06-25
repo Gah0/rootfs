@@ -5,19 +5,9 @@
  * Copyright (C) Arne Bernin <arne@matrix.loopback.org>
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
+ *
  */
-//config:config DUMPKMAP
-//config:	bool "dumpkmap (1.6 kb)"
-//config:	default y
-//config:	select PLATFORM_LINUX
-//config:	help
-//config:	This program dumps the kernel's keyboard translation table to
-//config:	stdout, in binary format. You can then use loadkmap to load it.
-
-//applet:IF_DUMPKMAP(APPLET_NOEXEC(dumpkmap, dumpkmap, BB_DIR_BIN, BB_SUID_DROP, dumpkmap))
-/* bb_common_bufsiz1 usage here is safe wrt NOEXEC: not expecting it to be zeroed. */
-
-//kbuild:lib-$(CONFIG_DUMPKMAP) += dumpkmap.o
+/* no options, no getopt */
 
 //usage:#define dumpkmap_trivial_usage
 //usage:       "> keymap"
@@ -28,7 +18,6 @@
 //usage:       "$ dumpkmap > keymap\n"
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 
 /* From <linux/kd.h> */
 struct kbentry {
@@ -47,6 +36,7 @@ int dumpkmap_main(int argc UNUSED_PARAM, char **argv)
 {
 	struct kbentry ke;
 	int i, j, fd;
+#define flags bb_common_bufsiz1
 
 	/* When user accidentally runs "dumpkmap FILE"
 	 * instead of "dumpkmap >FILE", we'd dump binary stuff to tty.
@@ -58,8 +48,19 @@ int dumpkmap_main(int argc UNUSED_PARAM, char **argv)
 
 	fd = get_console_fd_or_die();
 
-#define flags bb_common_bufsiz1
-	setup_common_bufsiz();
+#if 0
+	write(STDOUT_FILENO, "bkeymap", 7);
+	/* Here we want to set everything to 0 except for indexes:
+	 * [0-2] [4-6] [8-10] [12]
+	 */
+	/*memset(flags, 0x00, MAX_NR_KEYMAPS); - already is */
+	memset(flags, 0x01, 13);
+	flags[3] = flags[7] = flags[11] = 0;
+	/* dump flags */
+	write(STDOUT_FILENO, flags, MAX_NR_KEYMAPS);
+#define flags7 flags
+#else
+	/* Same effect */
 	/*                     0 1 2 3 4 5 6 7 8 9 a b c=12 */
 	memcpy(flags, "bkeymap\1\1\1\0\1\1\1\0\1\1\1\0\1",
 	/* Can use sizeof, or sizeof-1. sizeof is even, using that */
@@ -67,6 +68,7 @@ int dumpkmap_main(int argc UNUSED_PARAM, char **argv)
 	);
 	write(STDOUT_FILENO, flags, 7 + MAX_NR_KEYMAPS);
 #define flags7 (flags + 7)
+#endif
 
 	for (i = 0; i < 13; i++) {
 		if (flags7[i]) {

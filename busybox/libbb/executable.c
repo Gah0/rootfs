@@ -6,6 +6,7 @@
  *
  * Licensed under GPLv2 or later, see file LICENSE in this source tree.
  */
+
 #include "libbb.h"
 
 /* check if path points to an executable file;
@@ -25,8 +26,7 @@ int FAST_FUNC file_is_executable(const char *name)
  *  you may call find_executable again with this PATHp to continue
  *  (if it's not NULL).
  * return NULL otherwise; (PATHp is undefined)
- * in all cases (*PATHp) contents are temporarily modified
- * but are restored on return (s/:/NUL/ and back).
+ * in all cases (*PATHp) contents will be trashed (s/:/NUL/).
  */
 char* FAST_FUNC find_executable(const char *filename, char **PATHp)
 {
@@ -42,17 +42,14 @@ char* FAST_FUNC find_executable(const char *filename, char **PATHp)
 
 	p = *PATHp;
 	while (p) {
-		int ex;
-
 		n = strchr(p, ':');
-		if (n) *n = '\0';
+		if (n)
+			*n++ = '\0';
 		p = concat_path_file(
 			p[0] ? p : ".", /* handle "::" case */
 			filename
 		);
-		ex = file_is_executable(p);
-		if (n) *n++ = ':';
-		if (ex) {
+		if (file_is_executable(p)) {
 			*PATHp = n;
 			return p;
 		}
@@ -68,8 +65,10 @@ char* FAST_FUNC find_executable(const char *filename, char **PATHp)
  */
 int FAST_FUNC executable_exists(const char *filename)
 {
-	char *path = getenv("PATH");
-	char *ret = find_executable(filename, &path);
+	char *path = xstrdup(getenv("PATH"));
+	char *tmp = path;
+	char *ret = find_executable(filename, &tmp);
+	free(path);
 	free(ret);
 	return ret != NULL;
 }
@@ -84,19 +83,10 @@ int FAST_FUNC BB_EXECVP(const char *file, char *const argv[])
 }
 #endif
 
-void FAST_FUNC BB_EXECVP_or_die(char **argv)
+int FAST_FUNC BB_EXECVP_or_die(char **argv)
 {
 	BB_EXECVP(argv[0], argv);
 	/* SUSv3-mandated exit codes */
 	xfunc_error_retval = (errno == ENOENT) ? 127 : 126;
 	bb_perror_msg_and_die("can't execute '%s'", argv[0]);
-}
-
-/* Typical idiom for applets which exec *optional* PROG [ARGS] */
-void FAST_FUNC exec_prog_or_SHELL(char **argv)
-{
-	if (argv[0]) {
-		BB_EXECVP_or_die(argv);
-	}
-	run_shell(getenv("SHELL"), /*login:*/ 1, NULL);
 }

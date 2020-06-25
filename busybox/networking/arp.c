@@ -12,16 +12,6 @@
  *
  * modified for getopt32 by Arne Bernin <arne [at] alamut.de>
  */
-//config:config ARP
-//config:	bool "arp (10 kb)"
-//config:	default y
-//config:	select PLATFORM_LINUX
-//config:	help
-//config:	Manipulate the system ARP cache.
-
-//applet:IF_ARP(APPLET(arp, BB_DIR_SBIN, BB_SUID_DROP))
-
-//kbuild:lib-$(CONFIG_ARP) += arp.o interface.o
 
 //usage:#define arp_trivial_usage
 //usage:     "\n[-vn]	[-H HWTYPE] [-i IF] -a [HOSTNAME]"
@@ -42,7 +32,6 @@
 //usage:       "\n	-H HWTYPE	Hardware address type"
 
 #include "libbb.h"
-#include "common_bufsiz.h"
 #include "inet_common.h"
 
 #include <arpa/inet.h>
@@ -79,14 +68,14 @@ struct globals {
 	const struct hwtype *hw; /* current hardware type */
 	const char *device;      /* current device */
 	smallint hw_set;         /* flag if hw-type was set (-H) */
+
 } FIX_ALIASING;
-#define G (*(struct globals*)bb_common_bufsiz1)
+#define G (*(struct globals*)&bb_common_bufsiz1)
 #define ap         (G.ap        )
 #define hw         (G.hw        )
 #define device     (G.device    )
 #define hw_set     (G.hw_set    )
 #define INIT_G() do { \
-	setup_common_bufsiz(); \
 	device = ""; \
 } while (0)
 
@@ -116,7 +105,7 @@ static int arp_del(char **args)
 	/* Resolve the host name. */
 	host = *args;
 	if (ap->input(host, &sa) < 0) {
-		bb_simple_herror_msg_and_die(host);
+		bb_herror_msg_and_die("%s", host);
 	}
 
 	/* If a host has more than one address, use the correct one! */
@@ -149,7 +138,7 @@ static int arp_del(char **args)
 #ifdef HAVE_ATF_DONTPUB
 			req.arp_flags |= ATF_DONTPUB;
 #else
-			bb_simple_error_msg("feature ATF_DONTPUB is not supported");
+			bb_error_msg("feature ATF_DONTPUB is not supported");
 #endif
 			args++;
 			break;
@@ -157,7 +146,7 @@ static int arp_del(char **args)
 #ifdef HAVE_ATF_MAGIC
 			req.arp_flags |= ATF_MAGIC;
 #else
-			bb_simple_error_msg("feature ATF_MAGIC is not supported");
+			bb_error_msg("feature ATF_MAGIC is not supported");
 #endif
 			args++;
 			break;
@@ -173,7 +162,7 @@ static int arp_del(char **args)
 			if (strcmp(*args, "255.255.255.255") != 0) {
 				host = *args;
 				if (ap->input(host, &sa) < 0) {
-					bb_simple_herror_msg_and_die(host);
+					bb_herror_msg_and_die("%s", host);
 				}
 				memcpy(&req.arp_netmask, &sa, sizeof(struct sockaddr));
 				req.arp_flags |= ATF_NETMASK;
@@ -188,14 +177,14 @@ static int arp_del(char **args)
 	if (flags == 0)
 		flags = 3;
 
-	strncpy_IFNAMSIZ(req.arp_dev, device);
+	strncpy(req.arp_dev, device, sizeof(req.arp_dev));
 
 	err = -1;
 
 	/* Call the kernel. */
 	if (flags & 2) {
 		if (option_mask32 & ARP_OPT_v)
-			bb_simple_error_msg("SIOCDARP(nopub)");
+			bb_error_msg("SIOCDARP(nopub)");
 		err = ioctl(sockfd, SIOCDARP, &req);
 		if (err < 0) {
 			if (errno == ENXIO) {
@@ -204,20 +193,20 @@ static int arp_del(char **args)
 				printf("No ARP entry for %s\n", host);
 				return -1;
 			}
-			bb_simple_perror_msg_and_die("SIOCDARP(priv)");
+			bb_perror_msg_and_die("SIOCDARP(priv)");
 		}
 	}
 	if ((flags & 1) && err) {
  nopub:
 		req.arp_flags |= ATF_PUBL;
 		if (option_mask32 & ARP_OPT_v)
-			bb_simple_error_msg("SIOCDARP(pub)");
+			bb_error_msg("SIOCDARP(pub)");
 		if (ioctl(sockfd, SIOCDARP, &req) < 0) {
 			if (errno == ENXIO) {
 				printf("No ARP entry for %s\n", host);
 				return -1;
 			}
-			bb_simple_perror_msg_and_die("SIOCDARP(pub)");
+			bb_perror_msg_and_die("SIOCDARP(pub)");
 		}
 	}
 	return 0;
@@ -229,11 +218,11 @@ static void arp_getdevhw(char *ifname, struct sockaddr *sa)
 	struct ifreq ifr;
 	const struct hwtype *xhw;
 
-	strncpy_IFNAMSIZ(ifr.ifr_name, ifname);
+	strcpy(ifr.ifr_name, ifname);
 	ioctl_or_perror_and_die(sockfd, SIOCGIFHWADDR, &ifr,
 					"can't get HW-Address for '%s'", ifname);
 	if (hw_set && (ifr.ifr_hwaddr.sa_family != hw->type)) {
-		bb_simple_error_msg_and_die("protocol type mismatch");
+		bb_error_msg_and_die("protocol type mismatch");
 	}
 	memcpy(sa, &(ifr.ifr_hwaddr), sizeof(struct sockaddr));
 
@@ -261,20 +250,20 @@ static int arp_set(char **args)
 
 	host = *args++;
 	if (ap->input(host, &sa) < 0) {
-		bb_simple_herror_msg_and_die(host);
+		bb_herror_msg_and_die("%s", host);
 	}
 	/* If a host has more than one address, use the correct one! */
 	memcpy(&req.arp_pa, &sa, sizeof(struct sockaddr));
 
 	/* Fetch the hardware address. */
 	if (*args == NULL) {
-		bb_simple_error_msg_and_die("need hardware address");
+		bb_error_msg_and_die("need hardware address");
 	}
 	if (option_mask32 & ARP_OPT_D) {
 		arp_getdevhw(*args++, &req.arp_ha);
 	} else {
 		if (hw->input(*args++, &req.arp_ha) < 0) {
-			bb_simple_error_msg_and_die("invalid hardware address");
+			bb_error_msg_and_die("invalid hardware address");
 		}
 	}
 
@@ -302,7 +291,7 @@ static int arp_set(char **args)
 #ifdef HAVE_ATF_DONTPUB
 			flags |= ATF_DONTPUB;
 #else
-			bb_simple_error_msg("feature ATF_DONTPUB is not supported");
+			bb_error_msg("feature ATF_DONTPUB is not supported");
 #endif
 			args++;
 			break;
@@ -310,7 +299,7 @@ static int arp_set(char **args)
 #ifdef HAVE_ATF_MAGIC
 			flags |= ATF_MAGIC;
 #else
-			bb_simple_error_msg("feature ATF_MAGIC is not supported");
+			bb_error_msg("feature ATF_MAGIC is not supported");
 #endif
 			args++;
 			break;
@@ -326,7 +315,7 @@ static int arp_set(char **args)
 			if (strcmp(*args, "255.255.255.255") != 0) {
 				host = *args;
 				if (ap->input(host, &sa) < 0) {
-					bb_simple_herror_msg_and_die(host);
+					bb_herror_msg_and_die("%s", host);
 				}
 				memcpy(&req.arp_netmask, &sa, sizeof(struct sockaddr));
 				flags |= ATF_NETMASK;
@@ -342,11 +331,11 @@ static int arp_set(char **args)
 	/* Fill in the remainder of the request. */
 	req.arp_flags = flags;
 
-	strncpy_IFNAMSIZ(req.arp_dev, device);
+	strncpy(req.arp_dev, device, sizeof(req.arp_dev));
 
 	/* Call the kernel. */
 	if (option_mask32 & ARP_OPT_v)
-		bb_simple_error_msg("SIOCSARP()");
+		bb_error_msg("SIOCSARP()");
 	xioctl(sockfd, SIOCSARP, &req);
 	return 0;
 }
@@ -422,7 +411,7 @@ static int arp_show(char *name)
 	if (name != NULL) {
 		/* Resolve the host name. */
 		if (ap->input(name, &sa) < 0) {
-			bb_simple_herror_msg_and_die(name);
+			bb_herror_msg_and_die("%s", name);
 		}
 		host = xstrdup(ap->sprint(&sa, 1));
 	}
@@ -530,7 +519,7 @@ int arp_main(int argc UNUSED_PARAM, char **argv)
 	/* Now see what we have to do here... */
 	if (opts & (ARP_OPT_d | ARP_OPT_s)) {
 		if (argv[0] == NULL)
-			bb_simple_error_msg_and_die("need host name");
+			bb_error_msg_and_die("need host name");
 		if (opts & ARP_OPT_s)
 			return arp_set(argv);
 		return arp_del(argv);
